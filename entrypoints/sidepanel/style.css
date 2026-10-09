@@ -1,0 +1,101 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+
+body {
+  margin: 0;
+  padding: 12px;
+}
+
+header h1 {
+  font-size: 18px;
+  margin: 0;
+}
+
+header p {
+  margin: 2px 0 12px;
+  opacity: 0.75;
+}
+
+h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 16px 0 6px;
+  opacity: 0.8;
+}
+
+#summary {
+  display: flex;
+  gap: 16px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.stat-label {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#tab-list li {
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#tab-list li:hover {
+  background: rgb(127 127 127 / 0.15);
+}
+
+#tab-list li.active {
+  outline: 1px solid rgb(127 127 127 / 0.5);
+}
+
+#tab-list .tab-title {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#tab-list .tab-url,
+#dup-list .dup-url {
+  display: block;
+  font-size: 11px;
+  opacity: 0.65;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#tab-list .dup-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #b3261e;
+}
+
+#dup-list li {
+  padding: 4px 0;
+}
+
+footer {
+  margin-top: 16px;
+  font-size: 11px;
+  opacity: 0.6;
+}

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Title is set from the branding module in main.ts (single source). -->
+    <title>Tabs</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header>
+      <h1 id="product-name"></h1>
+      <p id="tagline"></p>
+    </header>
+
+    <section id="summary" aria-live="polite">
+      <div class="stat">
+        <span class="stat-value" id="stat-total">–</span>
+        <span class="stat-label">open tabs</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-duplicates">–</span>
+        <span class="stat-label">exact duplicates</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-engine">–</span>
+        <span class="stat-label">normalize engine</span>
+      </div>
+    </section>
+
+    <section id="dup-groups" hidden>
+      <h2>Duplicate URLs</h2>
+      <ul id="dup-list"></ul>
+    </section>
+
+    <section>
+      <h2>Open tabs</h2>
+      <ul id="tab-list"></ul>
+    </section>
+
+    <footer>
+      <p id="status"></p>
+    </footer>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -1,5 +1,8 @@
 node_modules/
 dist/
+.output/
+.wxt/
 target/
+core/target/
 *.zip
 .DS_Store
