@@ -1,8 +1,16 @@
 import { defineBackground } from 'wxt/utils/define-background';
-import { summarizeDuplicates } from '../src/lib/duplicates';
+import { BRANDING } from '../src/config/branding';
+import {
+  countExtraCopies,
+  findExactDuplicateSets,
+  planBulkClose,
+  summarizeDuplicates,
+  type KeyedTab,
+} from '../src/lib/duplicates';
 import {
   ACTIVITY_CAP,
   ACTIVITY_KEY,
+  CLOSE_ALL_DUPLICATES_MESSAGE,
   CLOSE_DUPLICATE_SET_MESSAGE,
   GET_SNAPSHOT_MESSAGE,
   SETTINGS_KEY,
@@ -56,6 +64,13 @@ import {
  *  - Hot path: canonical key computation + Map lookups only. No
  *    storage writes until after a close has happened (activity-log
  *    append and swap-sample persist trail the close, chained).
+ *
+ * M1.1: the toolbar badge. Chrome cannot open the side panel on a
+ * background detection event, so the badge is the ambient prompt:
+ * it shows the number of extra exact-duplicate copies waiting for
+ * review, derived from the same live index and set builder the
+ * panel uses (the two numbers always agree). Action APIs are only
+ * called when the computed badge state actually changes.
  */
 
 interface TrackedTab {
@@ -283,6 +298,89 @@ export default defineBackground(() => {
     return { closed };
   }
 
+  /** The live tabs in the key-bearing shape the set builders use —
+   * the single derivation shared by the global close, the badge, and
+   * (via the snapshot) the panel, so all three always agree. */
+  function liveKeyedTabs(): KeyedTab[] {
+    return [...liveTabs.values()]
+      .filter((t) => !t.excluded)
+      .map((t) => ({
+        id: t.tabId,
+        exactKey: t.exactKey,
+        fuzzyKey: t.fuzzyKey,
+        firstSeenAt: t.firstSeenAt,
+      }));
+  }
+
+  /**
+   * Panel-initiated "close all extra copies" (M1.1). Plans from the
+   * live index at click time (never from the panel's possibly stale
+   * snapshot), keeps each set's newest tab, and re-validates every
+   * tab — still tracked, not excluded, still under the planned key —
+   * immediately before closing it. Exact tier only; fuzzy sets are
+   * never touched here.
+   */
+  async function closeAllDuplicateExtras(): Promise<{ closed: number }> {
+    const plans = planBulkClose(findExactDuplicateSets(liveKeyedTabs()));
+    let closed = 0;
+    for (const plan of plans) {
+      for (const id of plan.closeTabIds) {
+        const t = liveTabs.get(id);
+        if (!t || t.excluded || t.exactKey !== plan.exactKey) continue;
+        try {
+          await chrome.tabs.remove(id);
+          closed++;
+          appendActivity({
+            id: `${Date.now()}-${id}`,
+            url: t.url,
+            title: t.title,
+            closedTabId: id,
+            keptTabId: plan.keepTabId,
+            closedAt: Date.now(),
+            reason: 'bulk-close',
+          });
+        } catch {
+          // Tab disappeared between planning and close — skip it.
+        }
+      }
+    }
+    void refreshSnapshot();
+    return { closed };
+  }
+
+  // ------------------------------------------------------------------
+  // Toolbar badge (M1.1) — the ambient prompt Chrome allows
+  // ------------------------------------------------------------------
+
+  const BADGE_COLOR = '#b3261e';
+  let lastBadgeState: string | null = null;
+
+  /** Recompute the badge from the live exact index and push it to
+   * the toolbar — but only when it changed, so tab-event snapshot
+   * refreshes don't churn the action APIs. */
+  function updateBadge(): void {
+    const extraCount = countExtraCopies(
+      findExactDuplicateSets(liveKeyedTabs()),
+    );
+    const text = extraCount === 0 ? '' : extraCount > 99 ? '99+' : String(extraCount);
+    const title =
+      extraCount === 0
+        ? BRANDING.productName
+        : `${BRANDING.productName} — ${extraCount} duplicate ${extraCount === 1 ? 'tab' : 'tabs'} can be closed. Click to review.`;
+    const state = `${text}|${title}`;
+    if (state === lastBadgeState) return;
+    lastBadgeState = state;
+    try {
+      void chrome.action.setBadgeText({ text });
+      if (text !== '') {
+        void chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR });
+      }
+      void chrome.action.setTitle({ title });
+    } catch (err) {
+      console.warn('[tabsense] badge update failed:', err);
+    }
+  }
+
   // ------------------------------------------------------------------
   // Snapshot (the panel contract)
   // ------------------------------------------------------------------
@@ -329,6 +427,7 @@ export default defineBackground(() => {
             exactKey,
             fuzzyKey,
             firstSeenAt: tracked?.firstSeenAt ?? null,
+            favIconUrl: t.favIconUrl ?? '',
           };
         });
       const firstUrl = tabs.find((t) => t.url)?.url;
@@ -349,6 +448,9 @@ export default defineBackground(() => {
     } catch (err) {
       console.warn('[tabsense] snapshot refresh failed:', err);
     }
+    // The badge derives from the live index, not the snapshot, so it
+    // stays correct even if this refresh failed partway.
+    updateBadge();
   }
 
   // ------------------------------------------------------------------
@@ -477,6 +579,10 @@ export default defineBackground(() => {
       } else {
         sendResponse({ closed: 0 });
       }
+      return true;
+    }
+    if (message?.type === CLOSE_ALL_DUPLICATES_MESSAGE) {
+      void closeAllDuplicateExtras().then(sendResponse);
       return true;
     }
     if (message?.type === SET_AUTO_CLOSE_MESSAGE) {

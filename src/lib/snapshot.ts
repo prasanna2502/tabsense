@@ -17,6 +17,9 @@ export interface TabInfo {
    * pre-existing tabs, event time for observed ones); null if the
    * engine has no record. Drives "keep newest" ordering. */
   firstSeenAt: number | null;
+  /** The tab's favicon URL from chrome.tabs ("" when the tab has
+   * none). Display only — the panel falls back to a letter tile. */
+  favIconUrl: string;
 }
 
 /** One activity-log entry: a duplicate tab that was closed, kept so
@@ -113,6 +116,7 @@ export const SWAP_SAMPLES_CAP = 100;
 
 export const GET_SNAPSHOT_MESSAGE = 'tabs:get-snapshot';
 export const CLOSE_DUPLICATE_SET_MESSAGE = 'tabs:close-duplicate-set';
+export const CLOSE_ALL_DUPLICATES_MESSAGE = 'tabs:close-all-duplicates';
 export const SET_AUTO_CLOSE_MESSAGE = 'settings:set-auto-close';
 
 /**
