@@ -20,6 +20,10 @@ export interface TabInfo {
   /** The tab's favicon URL from chrome.tabs ("" when the tab has
    * none). Display only — the panel falls back to a letter tile. */
   favIconUrl: string;
+  /** When the tab was last accessed (epoch ms, from chrome.tabs),
+   * or null when Chrome reports none. Display only — it drives the
+   * "Last used …" line on compact member rows (M1.2). */
+  lastAccessed: number | null;
 }
 
 /** One activity-log entry: a duplicate tab that was closed, kept so
@@ -117,6 +121,7 @@ export const SWAP_SAMPLES_CAP = 100;
 export const GET_SNAPSHOT_MESSAGE = 'tabs:get-snapshot';
 export const CLOSE_DUPLICATE_SET_MESSAGE = 'tabs:close-duplicate-set';
 export const CLOSE_ALL_DUPLICATES_MESSAGE = 'tabs:close-all-duplicates';
+export const CLOSE_SIMILAR_SET_MESSAGE = 'tabs:close-similar-set';
 export const SET_AUTO_CLOSE_MESSAGE = 'settings:set-auto-close';
 
 /**

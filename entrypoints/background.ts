@@ -3,7 +3,9 @@ import { BRANDING } from '../src/config/branding';
 import {
   countExtraCopies,
   findExactDuplicateSets,
+  findFuzzySets,
   planBulkClose,
+  planSimilarClose,
   summarizeDuplicates,
   type KeyedTab,
 } from '../src/lib/duplicates';
@@ -12,6 +14,7 @@ import {
   ACTIVITY_KEY,
   CLOSE_ALL_DUPLICATES_MESSAGE,
   CLOSE_DUPLICATE_SET_MESSAGE,
+  CLOSE_SIMILAR_SET_MESSAGE,
   GET_SNAPSHOT_MESSAGE,
   SETTINGS_KEY,
   SET_AUTO_CLOSE_MESSAGE,
@@ -348,6 +351,53 @@ export default defineBackground(() => {
     return { closed };
   }
 
+  /**
+   * Panel-initiated manual cleanup of one similar-document group
+   * (M1.2): keep the view the user chose, close the other views.
+   * This is the only path that ever closes a fuzzy member, and it
+   * runs only on an explicit per-group click — the two-tier rule is
+   * unchanged (fuzzy matches are never auto-closed). The plan is
+   * re-derived from the live index at click time: the keep tab must
+   * be a current member of the named fuzzy set, and every tab is
+   * re-validated — still tracked, not excluded, still carrying that
+   * fuzzyKey — immediately before it is closed. Closed views land
+   * in the activity log, so Recently closed can reopen them.
+   */
+  async function closeSimilarSet(
+    fuzzyKey: string,
+    keepTabId: number,
+  ): Promise<{ closed: number }> {
+    const plan = planSimilarClose(
+      findFuzzySets(liveKeyedTabs()),
+      fuzzyKey,
+      keepTabId,
+    );
+    if (!plan) return { closed: 0 };
+    let closed = 0;
+    for (const id of plan.closeTabIds) {
+      const t = liveTabs.get(id);
+      if (!t || t.excluded || t.fuzzyKey !== fuzzyKey) continue;
+      try {
+        await chrome.tabs.remove(id);
+        closed++;
+        appendActivity({
+          id: `${Date.now()}-${id}`,
+          url: t.url,
+          title: t.title,
+          closedTabId: id,
+          keptTabId: plan.keepTabId,
+          closedAt: Date.now(),
+          reason: 'bulk-close',
+        });
+      } catch {
+        // Tab disappeared between planning and close — skip it.
+      }
+    }
+    // refreshSnapshot also recomputes the (exact-tier only) badge.
+    void refreshSnapshot();
+    return { closed };
+  }
+
   // ------------------------------------------------------------------
   // Toolbar badge (M1.1) — the ambient prompt Chrome allows
   // ------------------------------------------------------------------
@@ -428,6 +478,7 @@ export default defineBackground(() => {
             fuzzyKey,
             firstSeenAt: tracked?.firstSeenAt ?? null,
             favIconUrl: t.favIconUrl ?? '',
+            lastAccessed: t.lastAccessed ?? null,
           };
         });
       const firstUrl = tabs.find((t) => t.url)?.url;
@@ -583,6 +634,16 @@ export default defineBackground(() => {
     }
     if (message?.type === CLOSE_ALL_DUPLICATES_MESSAGE) {
       void closeAllDuplicateExtras().then(sendResponse);
+      return true;
+    }
+    if (message?.type === CLOSE_SIMILAR_SET_MESSAGE) {
+      const fuzzyKey = message.fuzzyKey;
+      const keepTabId = message.keepTabId;
+      if (typeof fuzzyKey === 'string' && typeof keepTabId === 'number') {
+        void closeSimilarSet(fuzzyKey, keepTabId).then(sendResponse);
+      } else {
+        sendResponse({ closed: 0 });
+      }
       return true;
     }
     if (message?.type === SET_AUTO_CLOSE_MESSAGE) {
