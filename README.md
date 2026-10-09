@@ -9,7 +9,11 @@ See TabSense turn a 35-tab mess into named groups:
 
 
 
-https://github.com/user-attachments/assets/434bd855-5f6d-4e1f-b28c-f9e7a035cfc1
+
+
+https://github.com/user-attachments/assets/e993927a-e41e-492d-af03-75e1cabf777a
+
+
 
 
 - Privacy: [PRIVACY.md](PRIVACY.md)
