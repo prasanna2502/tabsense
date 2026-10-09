@@ -2,6 +2,16 @@
 /* eslint-disable */
 
 /**
+ * Canonicalize a URL to its two M1 dedupe keys, returned as a JSON
+ * string `{"exact":"...","fuzzy":"..."}`:
+ *
+ * - `exact` — same document, same view/state (auto-close eligible)
+ * - `fuzzy` — same document, possibly different view/state
+ *   (suggestion tier only, never auto-closed)
+ */
+export function canonicalize_url(raw: string): string;
+
+/**
  * Normalize a URL string:
  *
  * - trims surrounding whitespace
@@ -17,6 +27,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly canonicalize_url: (a: number, b: number) => [number, number];
     readonly normalize_url: (a: number, b: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_malloc: (a: number, b: number) => number;

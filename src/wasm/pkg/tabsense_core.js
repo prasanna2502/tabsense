@@ -1,6 +1,31 @@
 /* @ts-self-types="./tabsense_core.d.ts" */
 
 /**
+ * Canonicalize a URL to its two M1 dedupe keys, returned as a JSON
+ * string `{"exact":"...","fuzzy":"..."}`:
+ *
+ * - `exact` — same document, same view/state (auto-close eligible)
+ * - `fuzzy` — same document, possibly different view/state
+ *   (suggestion tier only, never auto-closed)
+ * @param {string} raw
+ * @returns {string}
+ */
+export function canonicalize_url(raw) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.canonicalize_url(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Normalize a URL string:
  *
  * - trims surrounding whitespace

@@ -1,11 +1,12 @@
-//! TabSense Rust core (M0 stub).
+//! TabSense Rust core.
 //!
-//! Today this exposes a single real function, `normalize_url`, whose
-//! behavior is mirrored bit-for-bit by the TypeScript fallback in
-//! `src/lib/normalize.ts` (the fallback covers the window while this
-//! module is still instantiating, per proposal §5 / §10.1 rule 4).
-//! The full canonicalizer (tracking-parameter stripping, per-app
-//! document IDs) lands in M1.
+//! Exposes `normalize_url` (M0 base normalization) and
+//! `canonicalize_url` (M1 canonicalizer v1, see `canon.rs`), both
+//! mirrored bit-for-bit by TypeScript fallbacks (`src/lib/normalize.ts`,
+//! `src/lib/canonicalize.ts`) that cover the window while this module
+//! is still instantiating, per proposal §5 / §10.1 rule 4.
+
+mod canon;
 
 use wasm_bindgen::prelude::*;
 
@@ -24,6 +25,17 @@ pub fn normalize_url(raw: &str) -> String {
         Ok(parsed) => parsed.to_string(),
         Err(_) => trimmed.to_string(),
     }
+}
+
+/// Canonicalize a URL to its two M1 dedupe keys, returned as a JSON
+/// string `{"exact":"...","fuzzy":"..."}`:
+///
+/// - `exact` — same document, same view/state (auto-close eligible)
+/// - `fuzzy` — same document, possibly different view/state
+///   (suggestion tier only, never auto-closed)
+#[wasm_bindgen]
+pub fn canonicalize_url(raw: &str) -> String {
+    canon::keys_json(raw)
 }
 
 #[cfg(test)]
