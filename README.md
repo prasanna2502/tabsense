@@ -20,14 +20,28 @@ in M2.
 
 ## Build & try it
 
-Prerequisites: Node 20+, and (for the Wasm core) Rust with the
-`wasm32-unknown-unknown` target plus `wasm-pack`.
+Prerequisites: Node 20+. That alone is enough to build and test the extension — the
+compiled Wasm core is committed under `src/wasm/`.
+
+To rebuild the Rust core (only needed after changing `core/`) you also need:
+
+- Rust via [rustup](https://rustup.rs) with the `wasm32-unknown-unknown` target
+  (Homebrew's `rust` formula can't add targets — use `rustup`):
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --target wasm32-unknown-unknown
+  source "$HOME/.cargo/env"
+  ```
+- `wasm-pack`: `cargo install wasm-pack --locked`
+- `wasm-opt` from [binaryen](https://github.com/WebAssembly/binaryen/releases) on your
+  `PATH` (e.g. `brew install binaryen`). Optional, but without it the Wasm ships
+  unoptimized (~40% larger) — don't commit a build made without it.
 
 ```bash
 npm install
-npm run build:wasm   # rebuild the Rust core (only needed after changing core/)
-npm run build        # production build → .output/chrome-mv3
-npm test             # TypeScript unit tests (cargo test covers the Rust core)
+npm run build:wasm           # rebuild the Rust core (only needed after changing core/)
+npm run build                # production build → .output/chrome-mv3
+npm test                     # TypeScript unit tests
+(cd core && cargo test)      # Rust unit + golden-corpus tests
 ```
 
 Load it in Chrome:
