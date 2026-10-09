@@ -285,6 +285,46 @@ export function lastUsedLabel(
   return '';
 }
 
+// -------------------------------------------------------------------
+// Grouping status + suggestion labels (M2)
+// -------------------------------------------------------------------
+
+/** The passive grouping status line (proposal §11 — transparency
+ * without nagging). One short line, rendered in the suggestion
+ * section and in Settings & details. */
+export function groupingStatusLine(grouping: {
+  rung: 'nano' | 'heuristics' | 'domain-only' | 'paused';
+  pausedByUser: boolean;
+}): string {
+  if (grouping.pausedByUser || grouping.rung === 'paused') {
+    return 'Grouping: paused';
+  }
+  switch (grouping.rung) {
+    case 'nano':
+      return 'Grouping: on-device AI';
+    case 'heuristics':
+      return 'Grouping: heuristics';
+    case 'domain-only':
+      return 'Grouping: domain only';
+  }
+}
+
+/** Where a suggestion came from, in plain language. */
+export function suggestionSourceLabel(
+  source: 'nano' | 'heuristics' | 'domain-only',
+  nanoFallback: boolean,
+): string {
+  if (nanoFallback) return 'Local patterns';
+  switch (source) {
+    case 'nano':
+      return 'On-device AI';
+    case 'heuristics':
+      return 'Local patterns';
+    case 'domain-only':
+      return 'Same site';
+  }
+}
+
 export interface KeepCandidate {
   id: number;
   active: boolean;
