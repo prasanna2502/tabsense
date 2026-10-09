@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  extension:
+    name: Extension (build + unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run compile
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Perf budgets (stub harness reads perf-budgets.json)
+        run: npm run perf:stub
+
+      - name: Production build
+        run: npm run build
+
+      - name: Upload built extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabsense-extension
+          path: .output/chrome-mv3
+
+  rust-core:
+    name: Rust core (cargo test + wasm build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable + wasm32 target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust unit tests
+        working-directory: core
+        run: cargo test
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+
+      - name: Build Wasm and regenerate glue/bytes
+        run: npm run build:wasm
