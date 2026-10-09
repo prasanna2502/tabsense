@@ -5,8 +5,6 @@ Automatic semantic tab groups for Chrome: duplicate tabs are prevented at open t
 meaning with on-device AI, presented as one-click suggestions you can accept, reassign,
 or turn into a new group.
 
-- Product spec: [docs/proposal.md](docs/proposal.md)
-- Critique & execution plan: [docs/execution-plan.md](docs/execution-plan.md)
 - Privacy: [PRIVACY.md](PRIVACY.md)
 - Permission justifications: [docs/permission-justifications.md](docs/permission-justifications.md)
 
@@ -42,6 +40,6 @@ Load it in Chrome:
 - `src/wasm/` — loader + generated glue for the Rust core
 - `core/` — the Rust crate compiled to WebAssembly
 - `scripts/` — Wasm build script, perf-harness (stub at M0)
-- `perf-budgets.json` — performance budgets as code (proposal §10.2)
+- `perf-budgets.json` — the extension's performance budgets, as code
 
 License: MIT — see [LICENSE](LICENSE).
