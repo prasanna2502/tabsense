@@ -93,7 +93,7 @@ function cleanPairs(pairs: readonly Pair[], host: string): Pair[] {
 }
 
 function encodePairs(pairs: readonly Pair[]): string {
-  return new URLSearchParams(pairs).toString();
+  return new URLSearchParams([...pairs]).toString();
 }
 
 function normPath(path: string): string {

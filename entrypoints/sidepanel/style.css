@@ -99,3 +99,75 @@ footer {
   font-size: 11px;
   opacity: 0.6;
 }
+
+.note {
+  font-size: 12px;
+  opacity: 0.7;
+  margin: 4px 0;
+}
+
+#settings {
+  margin-top: 12px;
+}
+
+#settings label {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.set {
+  padding: 6px 0;
+  border-bottom: 1px solid rgb(127 127 127 / 0.2);
+}
+
+.set-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.set-head button,
+.activity-entry button {
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.set-members {
+  margin-top: 4px;
+  padding-left: 10px;
+}
+
+.set-members .tab-title {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.set-members .tab-url {
+  display: block;
+  font-size: 11px;
+  opacity: 0.65;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-entry {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.activity-entry span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

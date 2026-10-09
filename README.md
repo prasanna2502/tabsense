@@ -8,10 +8,15 @@ or turn into a new group.
 - Privacy: [PRIVACY.md](PRIVACY.md)
 - Permission justifications: [docs/permission-justifications.md](docs/permission-justifications.md)
 
-Status: **M0 — walking skeleton.** The extension loads, lists your open tabs in a side
-panel, and counts exact-URL duplicates live. A Rust core compiled to WebAssembly is
-wired into the service worker (URL normalization today; the canonicalizer lands in M1).
-No duplicate prevention, grouping, or AI yet.
+Status: **M1 — dedupe that can be trusted.** The extension canonicalizes every tab's
+URL in the Rust/Wasm core (with a bit-for-bit TypeScript fallback) into two keys:
+an *exact* key (same document, same view/state) and a *fuzzy* key (same document,
+different view/state). Opening a tab whose exact key is already open silently focuses
+the existing tab and closes the duplicate, with a recoverable entry in the panel's
+activity log; fuzzy matches are shown in the panel as "same document, different
+view" and are never auto-closed. A 95-case golden corpus, consumed by both the Rust
+and TypeScript test suites, holds exact-tier precision at 100%. Grouping and AI land
+in M2.
 
 ## Build & try it
 

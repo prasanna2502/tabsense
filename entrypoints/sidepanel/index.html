@@ -28,9 +28,31 @@
       </div>
     </section>
 
-    <section id="dup-groups" hidden>
-      <h2>Duplicate URLs</h2>
-      <ul id="dup-list"></ul>
+    <section id="settings">
+      <label>
+        <input type="checkbox" id="opt-autoclose" />
+        Automatically close exact duplicates (focus the open copy instead)
+      </label>
+      <p id="autoclose-note" class="note" hidden></p>
+    </section>
+
+    <section id="dup-sets" hidden>
+      <h2>Duplicate documents</h2>
+      <ul id="set-list"></ul>
+    </section>
+
+    <section id="fuzzy-sets" hidden>
+      <h2>Same document, different view</h2>
+      <p class="note">
+        Same document open in different views or states. These are
+        never auto-closed.
+      </p>
+      <ul id="fuzzy-list"></ul>
+    </section>
+
+    <section id="activity-section" hidden>
+      <h2>Recently closed duplicates</h2>
+      <ul id="activity-list"></ul>
     </section>
 
     <section>
@@ -39,6 +61,7 @@
     </section>
 
     <footer>
+      <p id="swap-stats"></p>
       <p id="status"></p>
     </footer>
 
