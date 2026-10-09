@@ -1,6 +1,6 @@
 # Permission justifications (for Chrome Web Store review)
 
-TabSense requests exactly three permissions. Each one maps directly to
+TabSense requests exactly four permissions. Each one maps directly to
 the extension's single purpose — automatic tab organization — as required
 by the Web Store's single-purpose policy. This document is the source
 for the per-permission justification text entered in the Developer
@@ -43,12 +43,22 @@ and an activity log so automatic actions can be undone.
 off the device by this permission; the extension has no server and no
 accounts. State is removed when the extension is uninstalled.
 
+## `tabGroups`
+
+**Why:** Since M2, TabSense files tabs into named Chrome tab groups —
+but only when the user explicitly accepts a grouping suggestion in
+the side panel. Creating a group with a name requires updating the
+group's title, which is what this permission grants. (Reading which
+group a tab belongs to comes from the `tabs` permission.)
+
+**Scope notes:** The permission is used to create and name groups on
+user-confirmed actions, and to ungroup tabs when the user undoes one.
+TabSense never moves, renames, or dissolves groups the user created
+themselves.
+
 ## Explicitly NOT requested
 
 - `history` — organization works from currently open tabs only.
-- `tabGroups` — **not needed at M0** (no grouping yet). It will be added
-  in the release that introduces grouping (M2), with its justification
-  added here at that time.
 - Host permissions / `scripting` — page content is not read. Rich page
   signals are a future opt-in and will request access at runtime only
   if the user enables them.

@@ -325,3 +325,87 @@ button.primary {
   cursor: pointer;
   margin-top: 6px;
 }
+
+/* --- Suggested groups (M2) ----------------------------------------- */
+
+#suggested-groups {
+  margin-top: 14px;
+}
+
+#suggestion-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.suggestion-card {
+  border: 1px solid var(--border, #dadce0);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+
+.suggestion-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.suggestion-target {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.suggestion-target select,
+.group-name-input {
+  max-width: 100%;
+}
+
+.undo-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--border, #dadce0);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+}
+
+.undo-bar[hidden] {
+  display: none;
+}
+
+/* --- Settings additions (M2) --------------------------------------- */
+
+.settings-heading {
+  margin: 12px 0 4px;
+  font-size: 13px;
+}
+
+.field {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.managed-note {
+  color: #b06000;
+  font-size: 12px;
+  margin: 2px 0 0;
+}
+
+.managed-note[hidden] {
+  display: none;
+}
+
+#blocklist-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  font-family: monospace;
+  font-size: 12px;
+}

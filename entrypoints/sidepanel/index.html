@@ -30,11 +30,18 @@
 
     <ul id="set-list" aria-label="Duplicate documents"></ul>
 
-    <!-- M2: the suggestion inbox renders here. Kept in the layout so
-         grouping lands in the reserved slot; hidden while empty. -->
+    <!-- M2: the suggestion inbox. Suggest mode only — accepting a
+         suggestion is the only way tabs get grouped. The section
+         appears when there are suggestions (or grouping is paused);
+         the status line is the passive §11 transparency surface. -->
     <section id="suggested-groups" hidden>
       <h2>Suggested groups</h2>
-      <div id="suggestion-list"></div>
+      <p id="grouping-status" class="note"></p>
+      <div id="group-undo-bar" class="undo-bar" hidden>
+        <span id="group-undo-text"></span>
+        <button id="group-undo-btn" type="button">Undo</button>
+      </div>
+      <ul id="suggestion-list"></ul>
     </section>
 
     <details id="similar-section" class="section" hidden>
@@ -74,6 +81,50 @@
         <input type="checkbox" id="opt-autoclose" />
         Automatically close exact duplicates (focus the open copy instead)
       </label>
+      <p class="managed-note" id="managed-autoclose" hidden>
+        Managed by your organization
+      </p>
+
+      <h3 class="settings-heading">Grouping</h3>
+      <label class="toggle">
+        <input type="checkbox" id="opt-grouping-paused" />
+        Pause grouping suggestions
+      </label>
+      <p class="managed-note" id="managed-grouping-paused" hidden>
+        Managed by your organization
+      </p>
+      <label class="field">
+        <span>Grouping help</span>
+        <select id="opt-provider">
+          <option value="nano">On-device AI (Gemini Nano)</option>
+          <option value="heuristics">Local rules only</option>
+        </select>
+      </label>
+      <p class="managed-note" id="managed-provider" hidden>
+        Managed by your organization
+      </p>
+      <p id="ai-status" class="note"></p>
+      <p id="grouping-status-settings" class="note"></p>
+
+      <h3 class="settings-heading">Never group these sites</h3>
+      <p class="note">
+        Tabs on these sites are never suggested or grouped. One site
+        per line — subdomains are included.
+      </p>
+      <textarea
+        id="blocklist-input"
+        rows="5"
+        spellcheck="false"
+        aria-label="Sites that are never grouped"
+      ></textarea>
+      <div class="set-actions">
+        <button id="blocklist-save" type="button">Save list</button>
+        <button id="blocklist-reset" type="button">Use defaults</button>
+      </div>
+      <p class="managed-note" id="managed-blocklist" hidden>
+        Managed by your organization
+      </p>
+
       <p id="core-status" class="note"></p>
       <p id="swap-stats" class="note" hidden></p>
     </details>

@@ -1,7 +1,15 @@
 # Privacy — TabSense
 
 *Draft for the Chrome Web Store listing and the GitHub Pages privacy page.
-Last updated: M0 (walking skeleton).*
+Last updated: M2 (semantic grouping, Suggest mode).*
+
+## Grouping (M2)
+
+Tab grouping suggestions are computed **on your device**: a bundled
+rules engine scores your open tabs, and — where available — Chrome's
+built-in on-device AI model (Gemini Nano) reviews the suggestions.
+Neither path sends anything anywhere. Grouping happens only when you
+accept a suggestion; your own tab groups are never modified.
 
 ## The short version
 

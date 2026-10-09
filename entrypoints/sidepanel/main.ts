@@ -1,4 +1,5 @@
 import { BRANDING } from '../../src/config/branding';
+import { parseBlocklist } from '../../src/lib/blocklist';
 import {
   countExtraCopies,
   findExactDuplicateSets,
@@ -9,18 +10,27 @@ import {
 import {
   describeMembers,
   faviconFallbackLetter,
+  groupingStatusLine,
   hostLabel,
   lastUsedLabel,
   pickDefaultKeepTabId,
   pluralize,
+  suggestionSourceLabel,
 } from '../../src/lib/panel-model';
 import {
+  ACCEPT_SUGGESTION_MESSAGE,
   CLOSE_ALL_DUPLICATES_MESSAGE,
   CLOSE_DUPLICATE_SET_MESSAGE,
   CLOSE_SIMILAR_SET_MESSAGE,
+  DISMISS_SUGGESTION_MESSAGE,
   GET_SNAPSHOT_MESSAGE,
   SET_AUTO_CLOSE_MESSAGE,
+  SET_BLOCKLIST_MESSAGE,
+  SET_GROUPING_PAUSED_MESSAGE,
+  SET_PROVIDER_MESSAGE,
   SNAPSHOT_KEY,
+  UNDO_GROUP_ACTION_MESSAGE,
+  type Suggestion,
   type TabInfo,
   type TabSnapshot,
 } from '../../src/lib/snapshot';
@@ -96,6 +106,33 @@ const autoCloseEl = document.getElementById(
 ) as HTMLInputElement | null;
 const coreStatusEl = document.getElementById('core-status');
 const swapStatsEl = document.getElementById('swap-stats');
+const suggestedSectionEl = document.getElementById('suggested-groups');
+const groupingStatusEl = document.getElementById('grouping-status');
+const suggestionListEl = document.getElementById('suggestion-list');
+const groupUndoBarEl = document.getElementById('group-undo-bar');
+const groupUndoTextEl = document.getElementById('group-undo-text');
+const groupUndoBtn = document.getElementById(
+  'group-undo-btn',
+) as HTMLButtonElement | null;
+const groupingPausedEl = document.getElementById(
+  'opt-grouping-paused',
+) as HTMLInputElement | null;
+const providerEl = document.getElementById(
+  'opt-provider',
+) as HTMLSelectElement | null;
+const aiStatusEl = document.getElementById('ai-status');
+const groupingStatusSettingsEl = document.getElementById(
+  'grouping-status-settings',
+);
+const blocklistInputEl = document.getElementById(
+  'blocklist-input',
+) as HTMLTextAreaElement | null;
+const blocklistSaveBtn = document.getElementById(
+  'blocklist-save',
+) as HTMLButtonElement | null;
+const blocklistResetBtn = document.getElementById(
+  'blocklist-reset',
+) as HTMLButtonElement | null;
 
 // -------------------------------------------------------------------
 // UI state that survives snapshot re-renders
@@ -117,6 +154,19 @@ const uiState = {
   /** All tabs: whether the 40-row preview cap has been lifted. */
   showAllTabs: false,
   closeAllInFlight: false,
+  /** Suggestion inbox: per-suggestion tab include/exclude choices
+   * (suggestionId → excluded tabIds). Absent = all included. */
+  suggestionExcluded: new Map<string, Set<number>>(),
+  /** Suggestion inbox: per-suggestion target override — a groupKey,
+   * or '__new__'. Absent = the suggestion's own target. */
+  suggestionTarget: new Map<string, string>(),
+  /** Suggestion inbox: per-suggestion new-group name edits. */
+  suggestionNewName: new Map<string, string>(),
+  /** Suggestions with an accept/dismiss in flight. */
+  suggestionInFlight: new Set<string>(),
+  /** The blocklist text last synced from the worker, so re-renders
+   * never clobber text the user is editing. */
+  blocklistSyncedText: null as string | null,
 };
 
 let lastSnapshot: TabSnapshot | null = null;
@@ -465,6 +515,278 @@ function similarCard(
 }
 
 // -------------------------------------------------------------------
+// Suggestion inbox (M2)
+//
+// Suggest mode: a suggestion is a proposal, never an action. Each
+// card shows what would be filed where, lets the user uncheck tabs,
+// retarget (another group, or a new group with an editable name),
+// then Accept or Dismiss. Accepting is the only path that groups a
+// tab, and the worker re-validates everything at click time.
+// -------------------------------------------------------------------
+
+const NEW_GROUP_TARGET = '__new__';
+
+function suggestionIncludedIds(suggestion: Suggestion): number[] {
+  const excluded = uiState.suggestionExcluded.get(suggestion.id);
+  return suggestion.tabIds.filter((id) => !excluded?.has(id));
+}
+
+function suggestionCard(suggestion: Suggestion, snapshot: TabSnapshot): HTMLLIElement {
+  const li = document.createElement('li');
+  const card = document.createElement('div');
+  card.className = 'suggestion-card';
+
+  const title = document.createElement('p');
+  title.className = 'suggestion-title';
+  title.textContent =
+    suggestion.kind === 'new-group'
+      ? `New group “${suggestion.proposedName ?? 'New group'}”`
+      : `Add to “${suggestion.targetGroupName ?? 'group'}”`;
+  const sub = document.createElement('p');
+  sub.className = 'row-sub';
+  sub.textContent = `${suggestionSourceLabel(suggestion.source, suggestion.nanoFallback)} · ${pluralize(suggestion.tabIds.length, 'tab')}`;
+  card.append(title, sub);
+
+  // Member rows with include/exclude toggles.
+  const memberList = document.createElement('ul');
+  memberList.className = 'member-list';
+  const byId = new Map(snapshot.tabs.map((t) => [t.id, t]));
+  for (const ref of suggestion.tabs) {
+    const row = document.createElement('li');
+    row.className = 'member-row selectable';
+    const label = document.createElement('label');
+    label.className = 'member-main';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = !uiState.suggestionExcluded
+      .get(suggestion.id)
+      ?.has(ref.tabId);
+    checkbox.setAttribute('aria-label', `Include: ${ref.title}`);
+    checkbox.addEventListener('change', () => {
+      const set =
+        uiState.suggestionExcluded.get(suggestion.id) ?? new Set<number>();
+      if (checkbox.checked) set.delete(ref.tabId);
+      else set.add(ref.tabId);
+      uiState.suggestionExcluded.set(suggestion.id, set);
+      if (lastSnapshot) render(lastSnapshot);
+    });
+    const tab = byId.get(ref.tabId);
+    const main = document.createElement('span');
+    main.className = 'row-main';
+    const titleEl = document.createElement('span');
+    titleEl.className = 'row-title';
+    titleEl.textContent = ref.title || '(untitled)';
+    const hostEl = document.createElement('span');
+    hostEl.className = 'row-sub';
+    hostEl.textContent = hostLabel(ref.url);
+    main.append(titleEl, hostEl);
+    label.append(checkbox, main);
+    row.append(label);
+    if (tab?.active) row.append(currentPill());
+    memberList.append(row);
+  }
+  card.append(memberList);
+
+  // Retarget: file into another TabSense group, or a new group
+  // (with an editable name). Manual groups are never offered —
+  // they are hands-off by design.
+  const targetRow = document.createElement('div');
+  targetRow.className = 'suggestion-target';
+  const targetLabel = document.createElement('label');
+  targetLabel.textContent = 'File into ';
+  const select = document.createElement('select');
+  select.setAttribute('aria-label', 'File into');
+  const ownValue =
+    suggestion.kind === 'new-group'
+      ? NEW_GROUP_TARGET
+      : (suggestion.targetGroupKey ?? NEW_GROUP_TARGET);
+  const options: { value: string; label: string }[] = [];
+  if (suggestion.kind === 'add-to-group' && suggestion.targetGroupKey) {
+    options.push({
+      value: suggestion.targetGroupKey,
+      label: suggestion.targetGroupName ?? 'Group',
+    });
+  }
+  options.push({
+    value: NEW_GROUP_TARGET,
+    label:
+      suggestion.kind === 'new-group'
+        ? `New group “${suggestion.proposedName ?? 'New group'}”`
+        : 'New group…',
+  });
+  for (const g of snapshot.groupOptions) {
+    if (g.windowId !== suggestion.windowId) continue;
+    if (g.groupKey === suggestion.targetGroupKey) continue;
+    options.push({ value: g.groupKey, label: g.name });
+  }
+  for (const opt of options) {
+    const optionEl = document.createElement('option');
+    optionEl.value = opt.value;
+    optionEl.textContent = opt.label;
+    select.append(optionEl);
+  }
+  select.value = uiState.suggestionTarget.get(suggestion.id) ?? ownValue;
+  select.addEventListener('change', () => {
+    uiState.suggestionTarget.set(suggestion.id, select.value);
+    if (lastSnapshot) render(lastSnapshot);
+  });
+  targetLabel.append(select);
+  targetRow.append(targetLabel);
+
+  const chosenTarget = uiState.suggestionTarget.get(suggestion.id) ?? ownValue;
+  if (chosenTarget === NEW_GROUP_TARGET) {
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'group-name-input';
+    nameInput.placeholder = 'Group name';
+    nameInput.maxLength = 60;
+    nameInput.value =
+      uiState.suggestionNewName.get(suggestion.id) ??
+      suggestion.proposedName ??
+      '';
+    nameInput.setAttribute('aria-label', 'New group name');
+    nameInput.addEventListener('input', () => {
+      uiState.suggestionNewName.set(suggestion.id, nameInput.value);
+    });
+    targetRow.append(nameInput);
+  }
+  card.append(targetRow);
+
+  // Actions.
+  const included = suggestionIncludedIds(suggestion);
+  const inFlight = uiState.suggestionInFlight.has(suggestion.id);
+  const actions = document.createElement('div');
+  actions.className = 'set-actions';
+  const acceptBtn = document.createElement('button');
+  acceptBtn.type = 'button';
+  acceptBtn.className = 'primary';
+  acceptBtn.disabled = inFlight || included.length === 0;
+  acceptBtn.textContent = inFlight
+    ? 'Filing…'
+    : chosenTarget === NEW_GROUP_TARGET
+      ? 'Create group'
+      : 'Add tabs';
+  acceptBtn.addEventListener('click', () => {
+    if (uiState.suggestionInFlight.has(suggestion.id)) return;
+    uiState.suggestionInFlight.add(suggestion.id);
+    const target =
+      chosenTarget === NEW_GROUP_TARGET
+        ? {
+            kind: 'new' as const,
+            name:
+              uiState.suggestionNewName.get(suggestion.id) ??
+              suggestion.proposedName ??
+              'New group',
+          }
+        : { kind: 'group' as const, groupKey: chosenTarget };
+    void chrome.runtime
+      .sendMessage({
+        type: ACCEPT_SUGGESTION_MESSAGE,
+        suggestionId: suggestion.id,
+        tabIds: included,
+        target,
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        uiState.suggestionInFlight.delete(suggestion.id);
+        uiState.suggestionExcluded.delete(suggestion.id);
+        uiState.suggestionTarget.delete(suggestion.id);
+        uiState.suggestionNewName.delete(suggestion.id);
+        void loadInitial();
+      });
+    if (lastSnapshot) render(lastSnapshot);
+  });
+  const dismissBtn = document.createElement('button');
+  dismissBtn.type = 'button';
+  dismissBtn.disabled = inFlight;
+  dismissBtn.textContent = 'Dismiss';
+  dismissBtn.addEventListener('click', () => {
+    if (uiState.suggestionInFlight.has(suggestion.id)) return;
+    uiState.suggestionInFlight.add(suggestion.id);
+    void chrome.runtime
+      .sendMessage({
+        type: DISMISS_SUGGESTION_MESSAGE,
+        suggestionId: suggestion.id,
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        uiState.suggestionInFlight.delete(suggestion.id);
+        uiState.suggestionExcluded.delete(suggestion.id);
+        uiState.suggestionTarget.delete(suggestion.id);
+        uiState.suggestionNewName.delete(suggestion.id);
+        void loadInitial();
+      });
+    if (lastSnapshot) render(lastSnapshot);
+  });
+  actions.append(acceptBtn, dismissBtn);
+  card.append(actions);
+
+  li.append(card);
+  return li;
+}
+
+function renderSuggestions(snapshot: TabSnapshot): void {
+  if (!suggestedSectionEl || !suggestionListEl) return;
+  const paused = snapshot.grouping.pausedByUser;
+  suggestedSectionEl.hidden = snapshot.suggestions.length === 0 && !paused;
+  if (groupingStatusEl) {
+    groupingStatusEl.textContent = groupingStatusLine(snapshot.grouping);
+  }
+  suggestionListEl.replaceChildren(
+    ...snapshot.suggestions.map((sug) => suggestionCard(sug, snapshot)),
+  );
+  // Undo bar for the most recent accepted action.
+  if (groupUndoBarEl && groupUndoTextEl && groupUndoBtn) {
+    const action = snapshot.lastGroupAction;
+    groupUndoBarEl.hidden = action === null;
+    if (action) {
+      groupUndoTextEl.textContent = `${action.description}.`;
+      groupUndoBtn.disabled = false;
+    }
+  }
+  // Drop per-suggestion UI state for suggestions that are gone.
+  const liveIds = new Set(snapshot.suggestions.map((s) => s.id));
+  for (const map of [
+    uiState.suggestionExcluded,
+    uiState.suggestionTarget,
+    uiState.suggestionNewName,
+  ]) {
+    for (const key of [...map.keys()]) {
+      if (!liveIds.has(key)) map.delete(key);
+    }
+  }
+}
+
+function renderManagedNote(
+  elementId: string,
+  snapshot: TabSnapshot,
+  key: string,
+): void {
+  const el = document.getElementById(elementId);
+  if (el) el.hidden = !snapshot.settingsView.managedKeys.includes(key);
+}
+
+/** Plain-language on-device AI status for Settings (the detailed
+ * counterpart of the passive status line). */
+function aiStatusText(snapshot: TabSnapshot): string {
+  if (snapshot.settingsView.provider === 'heuristics') {
+    return 'On-device AI: off by choice — grouping uses local rules.';
+  }
+  switch (snapshot.grouping.nanoAvailability) {
+    case 'available':
+      return 'On-device AI: available on this device.';
+    case 'downloadable':
+      return 'On-device AI: the model is not downloaded yet — grouping uses local rules meanwhile.';
+    case 'downloading':
+      return 'On-device AI: model downloading — grouping uses local rules meanwhile.';
+    case 'unavailable':
+      return 'On-device AI: not available on this device — grouping uses local rules.';
+    default:
+      return 'On-device AI: status not checked yet.';
+  }
+}
+
+// -------------------------------------------------------------------
 // Render
 // -------------------------------------------------------------------
 
@@ -564,6 +886,9 @@ function render(snapshot: TabSnapshot): void {
     );
   }
 
+  // Suggestion inbox (M2) — in the slot reserved by the M1.1 layout.
+  renderSuggestions(snapshot);
+
   // Similar documents (fuzzy sets): one collapsed card per group —
   // opening the section shows headers only. Manual cleanup lives
   // inside each card; fuzzy views are never auto-closed.
@@ -578,15 +903,20 @@ function render(snapshot: TabSnapshot): void {
     );
   }
 
-  // Recently closed (activity log) with Reopen.
+  // Recently closed (activity log) with Reopen. Grouping entries
+  // (group-accept / group-dismiss / group-undo) share the persisted
+  // log but are not closed tabs — they never appear here.
+  const closeActivity = snapshot.activity.filter(
+    (e) => e.reason === 'auto-close' || e.reason === 'bulk-close',
+  );
   if (activitySectionEl && activityListEl) {
-    activitySectionEl.hidden = snapshot.activity.length === 0;
+    activitySectionEl.hidden = closeActivity.length === 0;
     applySectionState(activitySectionEl);
     if (activityCountEl) {
-      activityCountEl.textContent = `(${snapshot.activity.length})`;
+      activityCountEl.textContent = `(${closeActivity.length})`;
     }
     activityListEl.replaceChildren(
-      ...snapshot.activity.map((entry) => {
+      ...closeActivity.map((entry) => {
         const li = document.createElement('li');
         li.className = 'activity-entry';
         const main = document.createElement('span');
@@ -626,7 +956,51 @@ function render(snapshot: TabSnapshot): void {
   applySectionState(settingsSectionEl);
   if (autoCloseEl) {
     autoCloseEl.checked = snapshot.autoCloseEnabled;
-    autoCloseEl.disabled = snapshot.coreState === 'failed';
+    autoCloseEl.disabled =
+      snapshot.coreState === 'failed' ||
+      snapshot.settingsView.managedKeys.includes('autoCloseEnabled');
+  }
+  renderManagedNote('managed-autoclose', snapshot, 'autoCloseEnabled');
+
+  // Grouping settings (M2): pause toggle, provider, AI status,
+  // blocklist editor — all with managed-precedence labeling.
+  const sv = snapshot.settingsView;
+  if (groupingPausedEl) {
+    groupingPausedEl.checked = sv.groupingPaused;
+    groupingPausedEl.disabled = sv.managedKeys.includes('groupingPaused');
+  }
+  renderManagedNote('managed-grouping-paused', snapshot, 'groupingPaused');
+  if (providerEl) {
+    providerEl.value = sv.provider;
+    providerEl.disabled = sv.managedKeys.includes('provider');
+  }
+  renderManagedNote('managed-provider', snapshot, 'provider');
+  if (aiStatusEl) {
+    aiStatusEl.textContent = aiStatusText(snapshot);
+  }
+  if (groupingStatusSettingsEl) {
+    groupingStatusSettingsEl.textContent = groupingStatusLine(
+      snapshot.grouping,
+    );
+  }
+  renderManagedNote('managed-blocklist', snapshot, 'blocklist');
+  if (blocklistInputEl) {
+    const text = sv.blocklist.join('\n');
+    // Never clobber an edit in progress: sync only when the field
+    // is untouched or the worker's list actually changed under us.
+    if (
+      document.activeElement !== blocklistInputEl ||
+      uiState.blocklistSyncedText === null
+    ) {
+      if (blocklistInputEl.value !== text) {
+        blocklistInputEl.value = text;
+      }
+      uiState.blocklistSyncedText = text;
+    }
+    const managed = sv.managedKeys.includes('blocklist');
+    blocklistInputEl.disabled = managed;
+    if (blocklistSaveBtn) blocklistSaveBtn.disabled = managed;
+    if (blocklistResetBtn) blocklistResetBtn.disabled = managed;
   }
   if (coreStatusEl) {
     coreStatusEl.textContent =
@@ -703,6 +1077,61 @@ if (autoCloseEl) {
       type: SET_AUTO_CLOSE_MESSAGE,
       enabled: autoCloseEl.checked,
     });
+  });
+}
+
+if (groupUndoBtn) {
+  groupUndoBtn.addEventListener('click', () => {
+    groupUndoBtn.disabled = true;
+    void chrome.runtime
+      .sendMessage({ type: UNDO_GROUP_ACTION_MESSAGE })
+      .catch(() => undefined)
+      .finally(() => void loadInitial());
+  });
+}
+
+if (groupingPausedEl) {
+  groupingPausedEl.addEventListener('change', () => {
+    void chrome.runtime
+      .sendMessage({
+        type: SET_GROUPING_PAUSED_MESSAGE,
+        paused: groupingPausedEl.checked,
+      })
+      .catch(() => undefined)
+      .finally(() => void loadInitial());
+  });
+}
+
+if (providerEl) {
+  providerEl.addEventListener('change', () => {
+    void chrome.runtime
+      .sendMessage({
+        type: SET_PROVIDER_MESSAGE,
+        provider: providerEl.value,
+      })
+      .catch(() => undefined)
+      .finally(() => void loadInitial());
+  });
+}
+
+if (blocklistSaveBtn && blocklistInputEl) {
+  blocklistSaveBtn.addEventListener('click', () => {
+    const parsed = parseBlocklist(blocklistInputEl.value);
+    uiState.blocklistSyncedText = null; // force resync from worker
+    void chrome.runtime
+      .sendMessage({ type: SET_BLOCKLIST_MESSAGE, blocklist: parsed })
+      .catch(() => undefined)
+      .finally(() => void loadInitial());
+  });
+}
+
+if (blocklistResetBtn) {
+  blocklistResetBtn.addEventListener('click', () => {
+    uiState.blocklistSyncedText = null;
+    void chrome.runtime
+      .sendMessage({ type: SET_BLOCKLIST_MESSAGE, blocklist: null })
+      .catch(() => undefined)
+      .finally(() => void loadInitial());
   });
 }
 

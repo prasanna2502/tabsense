@@ -10,7 +10,10 @@ export default defineConfig({
     description: BRANDING.tagline,
     // Minimal permissions, each justified in docs/permission-justifications.md.
     // Nothing else may be added without updating that document.
-    permissions: ['tabs', 'sidePanel', 'storage'],
+    // M2 adds `tabGroups`: applying an accepted grouping suggestion
+    // names the Chrome tab group it creates — impossible without it.
+    // (Reading group membership rides on `tabs`.) Nothing else added.
+    permissions: ['tabs', 'sidePanel', 'storage', 'tabGroups'],
     // MV3 blocks WebAssembly instantiation by default; 'wasm-unsafe-eval'
     // is the one token MV3 accepts to allow it, and it covers only the
     // Wasm bundled in this package (no remote code). Required for the
