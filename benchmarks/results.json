@@ -1,0 +1,266 @@
+{
+  "benchmark": "Benchmark-Lite",
+  "milestone": "M2",
+  "date": "2026-10-09",
+  "engine": "heuristics rung (TypeScript scorer, fixture-locked to the Rust core)",
+  "nano": "not run — Gemini Nano is unavailable in CI/sandbox; heuristics-only floor",
+  "sessions": [
+    {
+      "id": "recipes",
+      "tabs": 8,
+      "suggestions": 1,
+      "pairwise": {
+        "precision": 1,
+        "recall": 0.5,
+        "f1": 0.6666666666666666,
+        "tp": 3,
+        "fp": 0,
+        "fn": 3
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 0.75,
+        "f1": 0.8571428571428571
+      },
+      "clicksToOrganized": 4,
+      "manualBaselineClicks": 8
+    },
+    {
+      "id": "rust-learning",
+      "tabs": 7,
+      "suggestions": 1,
+      "pairwise": {
+        "precision": 1,
+        "recall": 0.16666666666666666,
+        "f1": 0.2857142857142857,
+        "tp": 1,
+        "fp": 0,
+        "fn": 5
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 0.6428571428571429,
+        "f1": 0.782608695652174
+      },
+      "clicksToOrganized": 3,
+      "manualBaselineClicks": 5
+    },
+    {
+      "id": "seattle-weather",
+      "tabs": 8,
+      "suggestions": 1,
+      "pairwise": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "tp": 6,
+        "fp": 0,
+        "fn": 0
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "clicksToOrganized": 1,
+      "manualBaselineClicks": 5
+    },
+    {
+      "id": "japan-travel",
+      "tabs": 8,
+      "suggestions": 1,
+      "pairwise": {
+        "precision": 1,
+        "recall": 0.1,
+        "f1": 0.18181818181818182,
+        "tp": 1,
+        "fp": 0,
+        "fn": 9
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 0.55,
+        "f1": 0.7096774193548387
+      },
+      "clicksToOrganized": 4,
+      "manualBaselineClicks": 6
+    },
+    {
+      "id": "work-docs",
+      "tabs": 7,
+      "suggestions": 1,
+      "pairwise": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "tp": 6,
+        "fp": 0,
+        "fn": 0
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "clicksToOrganized": 1,
+      "manualBaselineClicks": 5
+    },
+    {
+      "id": "github-tabs",
+      "tabs": 7,
+      "suggestions": 1,
+      "pairwise": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "tp": 3,
+        "fp": 0,
+        "fn": 0
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "clicksToOrganized": 1,
+      "manualBaselineClicks": 4
+    },
+    {
+      "id": "home-renovation",
+      "tabs": 7,
+      "suggestions": 1,
+      "pairwise": {
+        "precision": 1,
+        "recall": 0.16666666666666666,
+        "f1": 0.2857142857142857,
+        "tp": 1,
+        "fp": 0,
+        "fn": 5
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 0.6428571428571429,
+        "f1": 0.782608695652174
+      },
+      "clicksToOrganized": 3,
+      "manualBaselineClicks": 5
+    },
+    {
+      "id": "kids-school",
+      "tabs": 6,
+      "suggestions": 0,
+      "pairwise": {
+        "precision": 1,
+        "recall": 0,
+        "f1": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 6
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 0.5,
+        "f1": 0.6666666666666666
+      },
+      "clicksToOrganized": 4,
+      "manualBaselineClicks": 5
+    },
+    {
+      "id": "personal-finance",
+      "tabs": 7,
+      "suggestions": 1,
+      "pairwise": {
+        "precision": 1,
+        "recall": 0.1,
+        "f1": 0.18181818181818182,
+        "tp": 1,
+        "fp": 0,
+        "fn": 9
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 0.48571428571428577,
+        "f1": 0.6538461538461539
+      },
+      "clicksToOrganized": 4,
+      "manualBaselineClicks": 6
+    },
+    {
+      "id": "news-morning",
+      "tabs": 6,
+      "suggestions": 0,
+      "pairwise": {
+        "precision": 1,
+        "recall": 0,
+        "f1": 0,
+        "tp": 0,
+        "fp": 0,
+        "fn": 6
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 0.5,
+        "f1": 0.6666666666666666
+      },
+      "clicksToOrganized": 4,
+      "manualBaselineClicks": 5
+    },
+    {
+      "id": "youtube-woodworking",
+      "tabs": 7,
+      "suggestions": 1,
+      "pairwise": {
+        "precision": 0.4,
+        "recall": 1,
+        "f1": 0.5714285714285715,
+        "tp": 6,
+        "fp": 9,
+        "fn": 0
+      },
+      "bcubed": {
+        "precision": 0.5714285714285714,
+        "recall": 1,
+        "f1": 0.7272727272727273
+      },
+      "clicksToOrganized": 3,
+      "manualBaselineClicks": 5
+    },
+    {
+      "id": "desk-shopping",
+      "tabs": 7,
+      "suggestions": 1,
+      "pairwise": {
+        "precision": 0,
+        "recall": 0,
+        "f1": 0,
+        "tp": 0,
+        "fp": 1,
+        "fn": 6
+      },
+      "bcubed": {
+        "precision": 0.8571428571428571,
+        "recall": 0.5714285714285714,
+        "f1": 0.6857142857142857
+      },
+      "clicksToOrganized": 5,
+      "manualBaselineClicks": 5
+    }
+  ],
+  "aggregate": {
+    "pairwise": {
+      "precision": 0.7368421052631579,
+      "recall": 0.36363636363636365,
+      "f1": 0.48695652173913045,
+      "tp": 28,
+      "fp": 10,
+      "fn": 49
+    },
+    "bcubedItemWeighted": {
+      "precision": 0.9529411764705882,
+      "recall": 0.7270588235294118,
+      "f1": 0.7995166602228726
+    },
+    "clicksToOrganized": 37,
+    "manualBaselineClicks": 64
+  }
+}

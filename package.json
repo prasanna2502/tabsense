@@ -1,1 +1,24 @@
-{"description":"Automatic semantic tab groups for Chrome — duplicate prevention at open time and on-device semantic grouping.","devDependencies":{"@types/chrome":"^0.1.43","typescript":"^5.9.3","vitest":"^3.2.4","wxt":"^0.20.11"},"license":"MIT","name":"tabsense","private":true,"scripts":{"build":"wxt build","build:wasm":"node scripts/build-wasm.mjs","compile":"tsc --noEmit","dev":"wxt","perf:stub":"node scripts/perf-harness.mjs","postinstall":"wxt prepare","test":"vitest run"},"type":"module","version":"0.0.1"}
+{
+  "description": "Automatic semantic tab groups for Chrome \u2014 duplicate prevention at open time and on-device semantic grouping.",
+  "devDependencies": {
+    "@types/chrome": "^0.1.43",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4",
+    "wxt": "^0.20.11"
+  },
+  "license": "MIT",
+  "name": "tabsense",
+  "private": true,
+  "scripts": {
+    "build": "wxt build",
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "compile": "tsc --noEmit",
+    "dev": "wxt",
+    "perf:stub": "node scripts/perf-harness.mjs",
+    "postinstall": "wxt prepare",
+    "test": "vitest run",
+    "bench": "node benchmarks/run-benchmark.mjs"
+  },
+  "type": "module",
+  "version": "0.0.1"
+}
