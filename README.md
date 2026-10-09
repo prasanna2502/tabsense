@@ -5,6 +5,13 @@ Automatic semantic tab groups for Chrome: duplicate tabs are prevented at open t
 meaning with on-device AI, presented as one-click suggestions you can accept, reassign,
 or turn into a new group.
 
+See TabSense turn a 35-tab mess into named groups:
+
+
+
+https://github.com/user-attachments/assets/434bd855-5f6d-4e1f-b28c-f9e7a035cfc1
+
+
 - Privacy: [PRIVACY.md](PRIVACY.md)
 - Permission justifications: [docs/permission-justifications.md](docs/permission-justifications.md)
 
