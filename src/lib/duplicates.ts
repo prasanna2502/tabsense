@@ -141,6 +141,36 @@ export function planBulkClose(
   }));
 }
 
+export interface SimilarClosePlan {
+  fuzzyKey: string;
+  /** The survivor the user chose to keep. */
+  keepTabId: number;
+  /** Every other current member of the set, in set order. */
+  closeTabIds: number[];
+}
+
+/** Plan a manual "keep one view, close the others" cleanup of one
+ * fuzzy set (M1.2). This is the only path that ever closes a fuzzy
+ * member, and only on an explicit per-group user action — fuzzy
+ * matches are never auto-closed. Returns null when the named set no
+ * longer exists or the keep tab is not a current member, so a stale
+ * panel can never close the wrong tabs. Pure — the worker re-derives
+ * the sets from its live index at click time and re-validates every
+ * tab again before closing it. */
+export function planSimilarClose(
+  sets: readonly FuzzySet[],
+  fuzzyKey: string,
+  keepTabId: number,
+): SimilarClosePlan | null {
+  const set = sets.find((s) => s.fuzzyKey === fuzzyKey);
+  if (!set || !set.tabIds.includes(keepTabId)) return null;
+  return {
+    fuzzyKey,
+    keepTabId,
+    closeTabIds: set.tabIds.filter((id) => id !== keepTabId),
+  };
+}
+
 /** Groups of tabs sharing one fuzzyKey across 2+ distinct exactKeys:
  * the same document open in different views/states. Tabs that share
  * an exactKey land in an exact set instead; including them here when
