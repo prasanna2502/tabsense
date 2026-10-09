@@ -108,6 +108,39 @@ export function findExactDuplicateSets(
   return sets;
 }
 
+/** Total extra copies across exact duplicate sets — the number of
+ * tabs a "close all extra copies" action would close, and the number
+ * the toolbar badge advertises. Panel and worker share this so the
+ * two always agree. */
+export function countExtraCopies(
+  sets: readonly ExactDuplicateSet[],
+): number {
+  return sets.reduce((n, s) => n + Math.max(0, s.tabIds.length - 1), 0);
+}
+
+export interface BulkClosePlan {
+  exactKey: string;
+  /** The survivor: the set's newest tab (same pick as the panel's
+   * per-set "keep newest"). */
+  keepTabId: number;
+  /** Tabs to close, newest-first (set order minus the survivor). */
+  closeTabIds: number[];
+}
+
+/** Plan a global "close all extra copies": one entry per exact set,
+ * keeping each set's newest tab. Pure — the worker re-derives the
+ * sets from its live index at click time and re-validates every tab
+ * before closing, so a stale plan can never close the wrong tab. */
+export function planBulkClose(
+  sets: readonly ExactDuplicateSet[],
+): BulkClosePlan[] {
+  return sets.map((s) => ({
+    exactKey: s.exactKey,
+    keepTabId: s.newestTabId,
+    closeTabIds: s.tabIds.slice(1),
+  }));
+}
+
 /** Groups of tabs sharing one fuzzyKey across 2+ distinct exactKeys:
  * the same document open in different views/states. Tabs that share
  * an exactKey land in an exact set instead; including them here when
