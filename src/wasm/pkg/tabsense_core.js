@@ -26,6 +26,28 @@ export function canonicalize_url(raw) {
 }
 
 /**
+ * Cluster ungrouped tabs (M2 heuristic router). Payload: a JSON
+ * array of TabInput; returns a JSON array of
+ * `{tabIds, nameSeed, cohesion}` clusters of 2+ tabs.
+ * @param {string} payload
+ * @returns {string}
+ */
+export function cluster_tabs(payload) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(payload, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.cluster_tabs(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Normalize a URL string:
  *
  * - trims surrounding whitespace
@@ -44,6 +66,28 @@ export function normalize_url(raw) {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.normalize_url(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Score one tab against existing groups (M2 heuristic router).
+ * Payload: `{"tab": TabInput, "groups": [GroupInput]}`; returns a
+ * JSON array of up to 5 `{groupKey, score}` candidates.
+ * @param {string} payload
+ * @returns {string}
+ */
+export function score_candidates(payload) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(payload, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.score_candidates(ptr0, len0);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);

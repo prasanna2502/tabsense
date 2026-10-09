@@ -12,6 +12,13 @@
 export function canonicalize_url(raw: string): string;
 
 /**
+ * Cluster ungrouped tabs (M2 heuristic router). Payload: a JSON
+ * array of TabInput; returns a JSON array of
+ * `{tabIds, nameSeed, cohesion}` clusters of 2+ tabs.
+ */
+export function cluster_tabs(payload: string): string;
+
+/**
  * Normalize a URL string:
  *
  * - trims surrounding whitespace
@@ -23,12 +30,21 @@ export function canonicalize_url(raw: string): string;
  */
 export function normalize_url(raw: string): string;
 
+/**
+ * Score one tab against existing groups (M2 heuristic router).
+ * Payload: `{"tab": TabInput, "groups": [GroupInput]}`; returns a
+ * JSON array of up to 5 `{groupKey, score}` candidates.
+ */
+export function score_candidates(payload: string): string;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly canonicalize_url: (a: number, b: number) => [number, number];
+    readonly cluster_tabs: (a: number, b: number) => [number, number];
     readonly normalize_url: (a: number, b: number) => [number, number];
+    readonly score_candidates: (a: number, b: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

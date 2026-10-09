@@ -1,10 +1,23 @@
-import initWasm, { canonicalize_url, normalize_url } from './pkg/tabsense_core';
+import initWasm, {
+  canonicalize_url,
+  cluster_tabs,
+  normalize_url,
+  score_candidates,
+} from './pkg/tabsense_core';
 import { CORE_WASM_BASE64 } from './core-bytes';
 import { normalizeUrlFallback } from '../lib/normalize';
 import {
   canonicalKeysFallback,
   type CanonKeys,
 } from '../lib/canonicalize';
+import {
+  tsScorer,
+  type Scorer,
+  type ScorerCandidate,
+  type ScorerCluster,
+  type ScorerGroupInput,
+  type ScorerTabInput,
+} from '../lib/scorer';
 
 /**
  * Async loader for the Rust core compiled to WebAssembly.
@@ -104,4 +117,42 @@ export function canonicalKeys(
     }
   }
   return { keys: canonicalKeysFallback(url), engine: 'fallback' };
+}
+
+/**
+ * The M2 heuristic router: the Wasm core's scorer when ready, the
+ * TS mirror otherwise. The two implementations share fixtures and
+ * agree to 1e-6, so grouping behaves the same whichever answers —
+ * unlike auto-close, grouping has no cold-core gate: suggestions
+ * are review-only, so a fallback-built inbox is safe.
+ */
+export function getScorer(): Scorer {
+  if (!ready) return tsScorer;
+  return {
+    scoreCandidates(
+      tab: ScorerTabInput,
+      groups: readonly ScorerGroupInput[],
+    ): ScorerCandidate[] {
+      try {
+        const parsed = JSON.parse(
+          score_candidates(JSON.stringify({ tab, groups })),
+        ) as ScorerCandidate[];
+        return Array.isArray(parsed) ? parsed : tsScorer.scoreCandidates(tab, groups);
+      } catch (err) {
+        console.warn('[tabsense] Wasm score_candidates failed, using fallback:', err);
+        return tsScorer.scoreCandidates(tab, groups);
+      }
+    },
+    clusterTabs(tabs: readonly ScorerTabInput[]): ScorerCluster[] {
+      try {
+        const parsed = JSON.parse(
+          cluster_tabs(JSON.stringify(tabs)),
+        ) as ScorerCluster[];
+        return Array.isArray(parsed) ? parsed : tsScorer.clusterTabs(tabs);
+      } catch (err) {
+        console.warn('[tabsense] Wasm cluster_tabs failed, using fallback:', err);
+        return tsScorer.clusterTabs(tabs);
+      }
+    },
+  };
 }

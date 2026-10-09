@@ -7,6 +7,7 @@
 //! is still instantiating, per proposal §5 / §10.1 rule 4.
 
 mod canon;
+mod scorer;
 
 use wasm_bindgen::prelude::*;
 
@@ -36,6 +37,22 @@ pub fn normalize_url(raw: &str) -> String {
 #[wasm_bindgen]
 pub fn canonicalize_url(raw: &str) -> String {
     canon::keys_json(raw)
+}
+
+/// Score one tab against existing groups (M2 heuristic router).
+/// Payload: `{"tab": TabInput, "groups": [GroupInput]}`; returns a
+/// JSON array of up to 5 `{groupKey, score}` candidates.
+#[wasm_bindgen]
+pub fn score_candidates(payload: &str) -> String {
+    scorer::score_candidates_json(payload)
+}
+
+/// Cluster ungrouped tabs (M2 heuristic router). Payload: a JSON
+/// array of TabInput; returns a JSON array of
+/// `{tabIds, nameSeed, cohesion}` clusters of 2+ tabs.
+#[wasm_bindgen]
+pub fn cluster_tabs(payload: &str) -> String {
+    scorer::cluster_tabs_json(payload)
 }
 
 #[cfg(test)]
