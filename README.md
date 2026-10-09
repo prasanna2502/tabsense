@@ -8,13 +8,15 @@ or turn into a new group.
 - Privacy: [PRIVACY.md](PRIVACY.md)
 - Permission justifications: [docs/permission-justifications.md](docs/permission-justifications.md)
 
-Status: **M1.1 — dedupe that can be trusted, in a panel that leads with the action.**
+Status: **M1.2 — dedupe that can be trusted, in a panel that leads with the action.**
 The extension canonicalizes every tab's URL in the Rust/Wasm core (with a bit-for-bit
 TypeScript fallback) into two keys: an *exact* key (same document, same view/state)
 and a *fuzzy* key (same document, different view/state). Opening a tab whose exact
 key is already open silently focuses the existing tab and closes the duplicate, with
 a recoverable entry in the panel's activity log; fuzzy matches are shown in the
-panel as similar documents and are never auto-closed. Duplicates that were already
+panel as similar documents and are never auto-closed — but each similar-document
+group offers an explicit manual cleanup: choose the view to keep and close the
+others, with the closed views recoverable from Recently closed. Duplicates that were already
 open before TabSense started are surfaced instead of closed: the toolbar icon
 carries a badge with the number of extra copies waiting, and the side panel opens
 on a "Needs attention" card — "{N} duplicate tabs can be closed" with one-click
