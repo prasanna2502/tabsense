@@ -15,7 +15,7 @@ per-session table, and writes `benchmarks/results.json`.
 
 ## Corpus
 
-`sessions.json` — 12 scripted sessions, 89 tabs total. Each session
+`sessions.json` — 12 scripted sessions, 85 tabs total. Each session
 is a realistic open-tab set (title + URL as Chrome reports them)
 with **human-labeled expected groups**: the groups a person
 organizing by hand would file the tabs into. Tabs in no expected
