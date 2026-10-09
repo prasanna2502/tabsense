@@ -4,16 +4,20 @@ import {
   findExactDuplicateSets,
   findFuzzySets,
   type ExactDuplicateSet,
+  type FuzzySet,
 } from '../../src/lib/duplicates';
 import {
+  describeMembers,
   faviconFallbackLetter,
   hostLabel,
-  hostPathLabel,
+  lastUsedLabel,
+  pickDefaultKeepTabId,
   pluralize,
 } from '../../src/lib/panel-model';
 import {
   CLOSE_ALL_DUPLICATES_MESSAGE,
   CLOSE_DUPLICATE_SET_MESSAGE,
+  CLOSE_SIMILAR_SET_MESSAGE,
   GET_SNAPSHOT_MESSAGE,
   SET_AUTO_CLOSE_MESSAGE,
   SNAPSHOT_KEY,
@@ -22,7 +26,7 @@ import {
 } from '../../src/lib/snapshot';
 
 /**
- * Side panel (M1.1 UX reset): action-first.
+ * Side panel (M1.1 UX reset, M1.2 readability): action-first.
  *
  * Layout, top to bottom: a "Needs attention" card with the one
  * obvious cleanup action, the duplicate cards it refers to
@@ -31,10 +35,17 @@ import {
  * Similar documents, Recently closed, All tabs, Settings & details.
  * Diagnostics live in Settings & details, never in the default view.
  *
+ * Disclosure is progressive at every level (M1.2): opening a
+ * section or card shows compact headers only, and member rows are
+ * short view descriptors + recency — never repeated titles or raw
+ * URLs. Similar-document groups carry the one manual cleanup fuzzy
+ * matches get: pick the view to keep, close the others.
+ *
  * Rendering is snapshot-driven (the worker owns tab state and
  * pushes via chrome.storage). Small pieces of UI state that must
  * survive a re-render — which sections/cards are open, the search
- * query, a close in flight — are kept here and re-applied.
+ * query, keep choices, a close in flight — are kept here and
+ * re-applied.
  */
 
 document.title = BRANDING.productName;
@@ -74,6 +85,9 @@ const tabSearchEl = document.getElementById(
 ) as HTMLInputElement | null;
 const tabListEl = document.getElementById('tab-list');
 const noTabMatchesEl = document.getElementById('no-tab-matches');
+const showAllTabsBtn = document.getElementById(
+  'show-all-tabs',
+) as HTMLButtonElement | null;
 const settingsSectionEl = document.getElementById(
   'settings-section',
 ) as HTMLDetailsElement | null;
@@ -90,7 +104,18 @@ const swapStatsEl = document.getElementById('swap-stats');
 const uiState = {
   openSections: new Set<string>(),
   expandedCards: new Set<string>(),
+  /** Similar-document cards the user has opened (by fuzzyKey);
+   * all start closed — opening the section shows headers only. */
+  expandedFuzzyCards: new Set<string>(),
+  /** The user's chosen "view to keep" per fuzzy set (by fuzzyKey).
+   * Only written on an explicit radio change, so an untouched
+   * group's default keeps tracking the active/most-recent view. */
+  similarKeepSelection: new Map<string, number>(),
+  /** Fuzzy sets with a close-other-views request in flight. */
+  similarCloseInFlight: new Set<string>(),
   searchQuery: '',
+  /** All tabs: whether the 40-row preview cap has been lifted. */
+  showAllTabs: false,
   closeAllInFlight: false,
 };
 
@@ -142,9 +167,9 @@ function activateTab(tab: TabInfo): void {
   void chrome.windows.update(tab.windowId, { focused: true });
 }
 
-/** One tab row: favicon, title, and a muted host (or host/path) line.
- * Clicking activates the tab and focuses its window. */
-function tabRow(tab: TabInfo, sublabel: 'host' | 'hostPath'): HTMLLIElement {
+/** One tab row (All tabs list): favicon, title, and a muted host
+ * line. Clicking activates the tab and focuses its window. */
+function tabRow(tab: TabInfo): HTMLLIElement {
   const li = document.createElement('li');
   li.className = 'tab-row';
   if (tab.active) li.classList.add('active');
@@ -155,8 +180,7 @@ function tabRow(tab: TabInfo, sublabel: 'host' | 'hostPath'): HTMLLIElement {
   title.textContent = tab.title || '(untitled)';
   const sub = document.createElement('span');
   sub.className = 'row-sub';
-  sub.textContent =
-    sublabel === 'host' ? hostLabel(tab.url) : hostPathLabel(tab.url);
+  sub.textContent = hostLabel(tab.url);
   main.append(title, sub);
   li.append(faviconEl(tab), main);
   if (tab.active) {
@@ -165,6 +189,50 @@ function tabRow(tab: TabInfo, sublabel: 'host' | 'hostPath'): HTMLLIElement {
     pill.textContent = 'Current';
     li.append(pill);
   }
+  li.addEventListener('click', () => activateTab(tab));
+  return li;
+}
+
+// -------------------------------------------------------------------
+// Compact member rows (M1.2)
+//
+// Inside a duplicate or similar card the document title and URL
+// repeat on every row and tell the reader nothing. A member row is
+// instead: a short view descriptor ("Sheet tab 3", "Newest copy"),
+// a recency line ("Last used 3:42 PM"), and a Current pill.
+// -------------------------------------------------------------------
+
+function memberMain(descriptor: string, tab: TabInfo): HTMLElement {
+  const main = document.createElement('span');
+  main.className = 'row-main';
+  const desc = document.createElement('span');
+  desc.className = 'row-title';
+  desc.textContent = descriptor;
+  main.append(desc);
+  const meta = lastUsedLabel(tab);
+  if (meta) {
+    const sub = document.createElement('span');
+    sub.className = 'row-sub';
+    sub.textContent = meta;
+    main.append(sub);
+  }
+  return main;
+}
+
+function currentPill(): HTMLElement {
+  const pill = document.createElement('span');
+  pill.className = 'pill';
+  pill.textContent = 'Current';
+  return pill;
+}
+
+/** A compact member row for an exact-duplicate card. Clicking
+ * activates the tab and focuses its window. */
+function memberRow(tab: TabInfo, descriptor: string): HTMLLIElement {
+  const li = document.createElement('li');
+  li.className = 'member-row';
+  li.append(memberMain(descriptor, tab));
+  if (tab.active) li.append(currentPill());
   li.addEventListener('click', () => activateTab(tab));
   return li;
 }
@@ -214,7 +282,14 @@ function duplicateCard(
   const body = document.createElement('div');
   body.className = 'set-body';
   const memberList = document.createElement('ul');
-  memberList.replaceChildren(...members.map((m) => tabRow(m, 'hostPath')));
+  memberList.className = 'member-list';
+  // Members arrive newest-first (set.tabIds order). Positional
+  // descriptors — no repeated titles, no URLs.
+  memberList.replaceChildren(
+    ...members.map((m, i) =>
+      memberRow(m, i === 0 ? 'Newest copy' : `Copy ${i + 1}`),
+    ),
+  );
   const actionRow = document.createElement('div');
   actionRow.className = 'set-actions';
   const button = document.createElement('button');
@@ -237,8 +312,166 @@ function duplicateCard(
 }
 
 // -------------------------------------------------------------------
+// Similar-document cards (M1.2)
+//
+// Each fuzzy set is its own collapsed card: opening the Similar
+// documents section shows one compact header per group, and member
+// rows appear only when that group is opened. Inside, the user can
+// pick the view to keep and close the others — the one manual
+// cleanup fuzzy matches get. They are still never auto-closed.
+// -------------------------------------------------------------------
+
+/** The keep selection for a group: the user's stored choice while
+ * its tab is still a member, otherwise the default (active member,
+ * else most recently accessed, else the set's newest-first order). */
+function resolveSimilarKeep(
+  set: FuzzySet,
+  members: readonly TabInfo[],
+): number {
+  const stored = uiState.similarKeepSelection.get(set.fuzzyKey);
+  if (stored !== undefined) {
+    if (members.some((m) => m.id === stored)) return stored;
+    uiState.similarKeepSelection.delete(set.fuzzyKey);
+  }
+  return pickDefaultKeepTabId(members) ?? members[0].id;
+}
+
+function similarMemberRow(
+  set: FuzzySet,
+  tab: TabInfo,
+  descriptor: string,
+  keepTabId: number,
+): HTMLLIElement {
+  const li = document.createElement('li');
+  li.className = 'member-row selectable';
+  const label = document.createElement('label');
+  label.className = 'member-main';
+  const radio = document.createElement('input');
+  radio.type = 'radio';
+  radio.name = `keep-${encodeURIComponent(set.fuzzyKey)}`;
+  radio.checked = tab.id === keepTabId;
+  radio.setAttribute('aria-label', `Keep: ${descriptor}`);
+  radio.addEventListener('change', () => {
+    if (radio.checked) {
+      uiState.similarKeepSelection.set(set.fuzzyKey, tab.id);
+    }
+  });
+  label.append(radio, memberMain(descriptor, tab));
+  li.append(label);
+  if (tab.active) li.append(currentPill());
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.className = 'open-btn';
+  openBtn.textContent = 'Open';
+  openBtn.addEventListener('click', () => activateTab(tab));
+  li.append(openBtn);
+  // Clicking the row selects it as the view to keep (the label
+  // covers most of the row; this catches the rest) rather than
+  // navigating away — the Open button is the navigation affordance.
+  li.addEventListener('click', (event) => {
+    if ((event.target as HTMLElement).closest('button')) return;
+    radio.checked = true;
+    uiState.similarKeepSelection.set(set.fuzzyKey, tab.id);
+  });
+  return li;
+}
+
+function similarCard(
+  set: FuzzySet,
+  byId: Map<number, TabInfo>,
+): HTMLLIElement {
+  const members = set.tabIds
+    .map((id) => byId.get(id))
+    .filter((t): t is TabInfo => t !== undefined);
+  const rep = members[0];
+  const li = document.createElement('li');
+  const details = document.createElement('details');
+  details.className = 'set-card';
+  details.dataset.key = set.fuzzyKey;
+  details.open = uiState.expandedFuzzyCards.has(set.fuzzyKey);
+  details.addEventListener('toggle', () => {
+    if (details.open) uiState.expandedFuzzyCards.add(set.fuzzyKey);
+    else uiState.expandedFuzzyCards.delete(set.fuzzyKey);
+  });
+
+  const summary = document.createElement('summary');
+  summary.className = 'set-summary';
+  const main = document.createElement('span');
+  main.className = 'row-main';
+  const title = document.createElement('span');
+  title.className = 'row-title';
+  title.textContent = rep?.title || '(untitled)';
+  const sub = document.createElement('span');
+  sub.className = 'row-sub';
+  sub.textContent = rep
+    ? `${hostLabel(rep.url)} · ${pluralize(members.length, 'view')}`
+    : '';
+  main.append(title, sub);
+  summary.append(
+    rep
+      ? faviconEl(rep)
+      : faviconEl({ favIconUrl: '', title: '', url: '' }),
+    main,
+  );
+
+  const body = document.createElement('div');
+  body.className = 'set-body';
+  if (members.length > 0) {
+    const hint = document.createElement('p');
+    hint.className = 'note set-hint';
+    hint.textContent =
+      "Choose the view to keep. Closing a view doesn't delete the document — closed views appear in Recently closed, where you can reopen them.";
+    const keepTabId = resolveSimilarKeep(set, members);
+    const descriptors = describeMembers(members.map((m) => m.url));
+    const memberList = document.createElement('ul');
+    memberList.className = 'member-list';
+    memberList.replaceChildren(
+      ...members.map((m, i) =>
+        similarMemberRow(set, m, descriptors[i], keepTabId),
+      ),
+    );
+    const actionRow = document.createElement('div');
+    actionRow.className = 'set-actions';
+    const inFlight = uiState.similarCloseInFlight.has(set.fuzzyKey);
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.disabled = inFlight;
+    closeBtn.textContent = inFlight
+      ? 'Closing…'
+      : `Close other ${pluralize(members.length - 1, 'view')}`;
+    closeBtn.addEventListener('click', () => {
+      if (uiState.similarCloseInFlight.has(set.fuzzyKey)) return;
+      uiState.similarCloseInFlight.add(set.fuzzyKey);
+      if (lastSnapshot) render(lastSnapshot);
+      void chrome.runtime
+        .sendMessage({
+          type: CLOSE_SIMILAR_SET_MESSAGE,
+          fuzzyKey: set.fuzzyKey,
+          keepTabId,
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          uiState.similarCloseInFlight.delete(set.fuzzyKey);
+          void loadInitial();
+        });
+    });
+    actionRow.append(closeBtn);
+    body.append(hint, memberList, actionRow);
+  }
+
+  details.append(summary, body);
+  li.append(details);
+  return li;
+}
+
+// -------------------------------------------------------------------
 // Render
 // -------------------------------------------------------------------
+
+/** How many All-tabs rows render before the "Show all" button —
+ * enough to scan, short enough to stay readable (M1.2). A search
+ * always shows every match, uncapped. */
+const ALL_TABS_PREVIEW_LIMIT = 40;
 
 function renderTabRows(): void {
   if (!tabListEl || !lastSnapshot) return;
@@ -251,7 +484,14 @@ function renderTabRows(): void {
       tab.url.toLowerCase().includes(query)
     );
   });
-  tabListEl.replaceChildren(...tabs.map((tab) => tabRow(tab, 'host')));
+  const capped =
+    query === '' && !uiState.showAllTabs && tabs.length > ALL_TABS_PREVIEW_LIMIT;
+  const visible = capped ? tabs.slice(0, ALL_TABS_PREVIEW_LIMIT) : tabs;
+  tabListEl.replaceChildren(...visible.map((tab) => tabRow(tab)));
+  if (showAllTabsBtn) {
+    showAllTabsBtn.hidden = !capped;
+    showAllTabsBtn.textContent = `Show all ${pluralize(tabs.length, 'tab')}`;
+  }
   if (noTabMatchesEl) noTabMatchesEl.hidden = tabs.length !== 0;
 }
 
@@ -278,7 +518,14 @@ function render(snapshot: TabSnapshot): void {
   // Needs attention: the one obvious action, or a calm tidy state.
   const exactSets = findExactDuplicateSets(snapshot.tabs);
   lastExactSets = exactSets;
+  const fuzzySets = findFuzzySets(snapshot.tabs);
   const extraCount = countExtraCopies(exactSets);
+  // Drop keep choices for groups that no longer exist.
+  for (const key of [...uiState.similarKeepSelection.keys()]) {
+    if (!fuzzySets.some((s) => s.fuzzyKey === key)) {
+      uiState.similarKeepSelection.delete(key);
+    }
+  }
   if (attentionTitleEl && attentionSubtitleEl && attentionActionsEl) {
     if (extraCount > 0) {
       attentionTitleEl.textContent =
@@ -290,6 +537,12 @@ function render(snapshot: TabSnapshot): void {
           ? '1 document is open more than once.'
           : `${exactSets.length} documents are open more than once.`;
       attentionActionsEl.hidden = false;
+    } else if (fuzzySets.length > 0) {
+      // Not "tidy" — there is an optional review waiting below.
+      attentionTitleEl.textContent = 'No exact duplicates';
+      attentionSubtitleEl.textContent =
+        "New duplicates will be handled automatically. Some documents below are open in more than one view — you can review those separately if you'd like.";
+      attentionActionsEl.hidden = true;
     } else {
       attentionTitleEl.textContent = 'Everything is tidy';
       attentionSubtitleEl.textContent =
@@ -311,8 +564,9 @@ function render(snapshot: TabSnapshot): void {
     );
   }
 
-  // Similar documents (fuzzy sets): display only, never bulk-closed.
-  const fuzzySets = findFuzzySets(snapshot.tabs);
+  // Similar documents (fuzzy sets): one collapsed card per group —
+  // opening the section shows headers only. Manual cleanup lives
+  // inside each card; fuzzy views are never auto-closed.
   if (similarSectionEl && fuzzyListEl) {
     similarSectionEl.hidden = fuzzySets.length === 0;
     applySectionState(similarSectionEl);
@@ -320,40 +574,7 @@ function render(snapshot: TabSnapshot): void {
       similarCountEl.textContent = `(${fuzzySets.length})`;
     }
     fuzzyListEl.replaceChildren(
-      ...fuzzySets.map((set) => {
-        const members = set.tabIds
-          .map((id) => byId.get(id))
-          .filter((t): t is TabInfo => t !== undefined);
-        const rep = members[0];
-        const li = document.createElement('li');
-        li.className = 'fuzzy-set';
-        const head = document.createElement('div');
-        head.className = 'fuzzy-head';
-        const main = document.createElement('span');
-        main.className = 'row-main';
-        const title = document.createElement('span');
-        title.className = 'row-title';
-        title.textContent = rep?.title || '(untitled)';
-        const sub = document.createElement('span');
-        sub.className = 'row-sub';
-        sub.textContent = rep
-          ? `${hostLabel(rep.url)} · ${pluralize(set.tabIds.length, 'view')}`
-          : '';
-        main.append(title, sub);
-        head.append(
-          rep
-            ? faviconEl(rep)
-            : faviconEl({ favIconUrl: '', title: '', url: '' }),
-          main,
-        );
-        const memberList = document.createElement('ul');
-        memberList.className = 'fuzzy-members';
-        memberList.replaceChildren(
-          ...members.map((m) => tabRow(m, 'hostPath')),
-        );
-        li.append(head, memberList);
-        return li;
-      }),
+      ...fuzzySets.map((set) => similarCard(set, byId)),
     );
   }
 
@@ -456,6 +677,13 @@ if (reviewBtn) {
     );
     card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     card?.querySelector('summary')?.focus({ preventScroll: true });
+  });
+}
+
+if (showAllTabsBtn) {
+  showAllTabsBtn.addEventListener('click', () => {
+    uiState.showAllTabs = true;
+    renderTabRows();
   });
 }
 
