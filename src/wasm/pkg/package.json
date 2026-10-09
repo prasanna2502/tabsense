@@ -1,0 +1,17 @@
+{
+  "name": "tabsense-core",
+  "type": "module",
+  "description": "Rust core for the extension, compiled to WebAssembly (URL normalization today; canonicalizer/index/scoring as the project grows). Product name intentionally absent — it lives only in src/config/branding.ts.",
+  "version": "0.0.1",
+  "license": "MIT",
+  "files": [
+    "tabsense_core_bg.wasm",
+    "tabsense_core.js",
+    "tabsense_core.d.ts"
+  ],
+  "main": "tabsense_core.js",
+  "types": "tabsense_core.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
