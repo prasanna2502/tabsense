@@ -4,47 +4,29 @@
   font-size: 14px;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   padding: 12px;
 }
 
 header h1 {
-  font-size: 18px;
+  font-size: 17px;
   margin: 0;
 }
 
 header p {
   margin: 2px 0 12px;
+  font-size: 12px;
   opacity: 0.75;
 }
 
 h2 {
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin: 16px 0 6px;
-  opacity: 0.8;
-}
-
-#summary {
-  display: flex;
-  gap: 16px;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-}
-
-.stat-value {
-  font-size: 20px;
-  font-weight: 600;
-}
-
-.stat-label {
-  font-size: 11px;
-  opacity: 0.7;
+  font-size: 14px;
+  margin: 0 0 4px;
 }
 
 ul {
@@ -53,104 +35,109 @@ ul {
   padding: 0;
 }
 
-#tab-list li {
-  padding: 6px 8px;
-  border-radius: 6px;
+button {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgb(127 127 127 / 0.45);
+  background: transparent;
+  color: inherit;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-#tab-list li:hover {
-  background: rgb(127 127 127 / 0.15);
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
-#tab-list li.active {
-  outline: 1px solid rgb(127 127 127 / 0.5);
+button.primary {
+  background: #0b57d0;
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
 }
 
-#tab-list .tab-title {
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+@media (prefers-color-scheme: dark) {
+  button.primary {
+    background: #a8c7fa;
+    color: #041e49;
+  }
 }
 
-#tab-list .tab-url,
-#dup-list .dup-url {
-  display: block;
-  font-size: 11px;
-  opacity: 0.65;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-#tab-list .dup-badge {
-  font-size: 10px;
-  font-weight: 700;
-  color: #b3261e;
-}
-
-#dup-list li {
-  padding: 4px 0;
-}
-
-footer {
-  margin-top: 16px;
-  font-size: 11px;
-  opacity: 0.6;
+:focus-visible {
+  outline: 2px solid #0b57d0;
+  outline-offset: 1px;
 }
 
 .note {
   font-size: 12px;
-  opacity: 0.7;
+  opacity: 0.72;
   margin: 4px 0;
 }
 
-#settings {
-  margin-top: 12px;
+/* --- Needs attention ------------------------------------------- */
+
+.warning {
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border: 1px solid rgb(179 38 30 / 0.5);
+  border-radius: 8px;
+  background: rgb(179 38 30 / 0.12);
+  font-size: 12.5px;
 }
 
-#settings label {
+#attention {
+  border: 1px solid rgb(127 127 127 / 0.35);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+#attention-actions {
   display: flex;
-  gap: 6px;
-  align-items: flex-start;
-  cursor: pointer;
-}
-
-.set {
-  padding: 6px 0;
-  border-bottom: 1px solid rgb(127 127 127 / 0.2);
-}
-
-.set-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+/* --- Shared row pieces ------------------------------------------ */
+
+.favicon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  flex: none;
+}
+
+.favicon-fallback {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(127 127 127 / 0.22);
+  font-size: 10px;
   font-weight: 600;
 }
 
-.set-head button,
-.activity-entry button {
-  font-size: 11px;
-  white-space: nowrap;
-  cursor: pointer;
+.row-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
 }
 
-.set-members {
-  margin-top: 4px;
-  padding-left: 10px;
-}
-
-.set-members .tab-title {
-  display: block;
+.row-title {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.set-members .tab-url {
-  display: block;
+.row-sub {
   font-size: 11px;
   opacity: 0.65;
   white-space: nowrap;
@@ -158,16 +145,140 @@ footer {
   text-overflow: ellipsis;
 }
 
-.activity-entry {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
+.pill {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgb(11 87 208 / 0.16);
 }
 
-.activity-entry span {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.tab-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tab-row:hover {
+  background: rgb(127 127 127 / 0.15);
+}
+
+.tab-row.active {
+  outline: 1px solid rgb(127 127 127 / 0.5);
+}
+
+/* --- Duplicate cards --------------------------------------------- */
+
+.set-card {
+  border: 1px solid rgb(127 127 127 / 0.28);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+
+.set-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.set-summary::-webkit-details-marker {
+  display: none;
+}
+
+.set-summary::after {
+  content: "▸";
+  flex: none;
+  opacity: 0.6;
+  transition: transform 0.12s ease;
+}
+
+.set-card[open] > .set-summary::after {
+  transform: rotate(90deg);
+}
+
+.set-body {
+  padding: 4px 6px 10px;
+  border-top: 1px solid rgb(127 127 127 / 0.18);
+}
+
+.set-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 4px 0;
+}
+
+/* --- Collapsible secondary sections ------------------------------ */
+
+.section {
+  margin-top: 14px;
+}
+
+.section > summary {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 0;
+  cursor: pointer;
+  list-style-position: outside;
+}
+
+.section .count {
+  font-weight: 400;
+  opacity: 0.65;
+}
+
+#tab-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgb(127 127 127 / 0.4);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+
+/* --- Similar documents ------------------------------------------- */
+
+.fuzzy-set {
+  padding: 6px 0;
+  border-bottom: 1px solid rgb(127 127 127 / 0.18);
+}
+
+.fuzzy-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fuzzy-members {
+  margin-top: 2px;
+  padding-left: 18px;
+}
+
+/* --- Recently closed ---------------------------------------------- */
+
+.activity-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+}
+
+/* --- Settings & details -------------------------------------------- */
+
+.toggle {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  cursor: pointer;
+  margin-top: 6px;
 }

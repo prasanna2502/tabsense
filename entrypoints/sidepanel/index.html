@@ -13,57 +13,69 @@
       <p id="tagline"></p>
     </header>
 
-    <section id="summary" aria-live="polite">
-      <div class="stat">
-        <span class="stat-value" id="stat-total">–</span>
-        <span class="stat-label">open tabs</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value" id="stat-duplicates">–</span>
-        <span class="stat-label">exact duplicates</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value" id="stat-engine">–</span>
-        <span class="stat-label">normalize engine</span>
+    <!-- Shown only when the on-device core failed to start. -->
+    <div id="core-warning" class="warning" role="alert" hidden></div>
+
+    <section id="attention" aria-live="polite">
+      <h2 id="attention-title">Checking your tabs…</h2>
+      <p id="attention-subtitle" class="note"></p>
+      <p id="attention-status" class="note" hidden></p>
+      <div id="attention-actions" hidden>
+        <button id="close-all-btn" class="primary" type="button">
+          Close all extra copies
+        </button>
+        <button id="review-btn" type="button">Review first</button>
       </div>
     </section>
 
-    <section id="settings">
-      <label>
+    <ul id="set-list" aria-label="Duplicate documents"></ul>
+
+    <!-- M2: the suggestion inbox renders here. Kept in the layout so
+         grouping lands in the reserved slot; hidden while empty. -->
+    <section id="suggested-groups" hidden>
+      <h2>Suggested groups</h2>
+      <div id="suggestion-list"></div>
+    </section>
+
+    <details id="similar-section" class="section" hidden>
+      <summary>
+        Similar documents <span class="count" id="similar-count"></span>
+      </summary>
+      <p class="note">
+        The same document open in different views or states. TabSense
+        will not close these automatically.
+      </p>
+      <ul id="fuzzy-list"></ul>
+    </details>
+
+    <details id="activity-section" class="section" hidden>
+      <summary>
+        Recently closed <span class="count" id="activity-count"></span>
+      </summary>
+      <ul id="activity-list"></ul>
+    </details>
+
+    <details id="all-tabs-section" class="section">
+      <summary>All tabs <span class="count" id="tabs-count"></span></summary>
+      <input
+        id="tab-search"
+        type="search"
+        placeholder="Search tabs"
+        aria-label="Search tabs"
+      />
+      <ul id="tab-list"></ul>
+      <p id="no-tab-matches" class="note" hidden>No tabs match your search.</p>
+    </details>
+
+    <details id="settings-section" class="section">
+      <summary>Settings &amp; details</summary>
+      <label class="toggle">
         <input type="checkbox" id="opt-autoclose" />
         Automatically close exact duplicates (focus the open copy instead)
       </label>
-      <p id="autoclose-note" class="note" hidden></p>
-    </section>
-
-    <section id="dup-sets" hidden>
-      <h2>Duplicate documents</h2>
-      <ul id="set-list"></ul>
-    </section>
-
-    <section id="fuzzy-sets" hidden>
-      <h2>Same document, different view</h2>
-      <p class="note">
-        Same document open in different views or states. These are
-        never auto-closed.
-      </p>
-      <ul id="fuzzy-list"></ul>
-    </section>
-
-    <section id="activity-section" hidden>
-      <h2>Recently closed duplicates</h2>
-      <ul id="activity-list"></ul>
-    </section>
-
-    <section>
-      <h2>Open tabs</h2>
-      <ul id="tab-list"></ul>
-    </section>
-
-    <footer>
-      <p id="swap-stats"></p>
-      <p id="status"></p>
-    </footer>
+      <p id="core-status" class="note"></p>
+      <p id="swap-stats" class="note" hidden></p>
+    </details>
 
     <script type="module" src="./main.ts"></script>
   </body>
