@@ -8,22 +8,27 @@ or turn into a new group.
 - Privacy: [PRIVACY.md](PRIVACY.md)
 - Permission justifications: [docs/permission-justifications.md](docs/permission-justifications.md)
 
-Status: **M1.2 — dedupe that can be trusted, in a panel that leads with the action.**
-The extension canonicalizes every tab's URL in the Rust/Wasm core (with a bit-for-bit
-TypeScript fallback) into two keys: an *exact* key (same document, same view/state)
-and a *fuzzy* key (same document, different view/state). Opening a tab whose exact
-key is already open silently focuses the existing tab and closes the duplicate, with
-a recoverable entry in the panel's activity log; fuzzy matches are shown in the
-panel as similar documents and are never auto-closed — but each similar-document
-group offers an explicit manual cleanup: choose the view to keep and close the
-others, with the closed views recoverable from Recently closed. Duplicates that were already
-open before TabSense started are surfaced instead of closed: the toolbar icon
-carries a badge with the number of extra copies waiting, and the side panel opens
-on a "Needs attention" card — "{N} duplicate tabs can be closed" with one-click
-cleanup — above collapsed cards for each document and collapsed sections for
-similar documents, recently closed tabs, all tabs, and settings. A 95-case golden
-corpus, consumed by both the Rust and TypeScript test suites, holds exact-tier
-precision at 100%. Grouping and AI land in M2.
+Status: **M2 — semantic grouping as suggestions (Suggest mode).** Everything from
+M1.2 (below the fold of this status), plus: open tabs are clustered by a heuristic
+router in the Rust core — title tokens, host, path segments, and the canonical
+document keys — and, when Chrome's built-in on-device model (Gemini Nano) is
+available, an AI judge confirms or rejects each candidate and names the group.
+Suggestions land in the side panel's Suggested groups inbox: create a new named
+group or file tabs into an existing one, with per-tab toggles, retargeting,
+dismiss, and undo; accepting applies real Chrome tab groups. Tabs in groups you
+created yourself are never touched, pinned tabs are excluded, sensitive sites are
+blocklisted by default, and a circuit breaker degrades Nano → heuristics →
+domain-only → paused without ever affecting dedupe. Grouping settings (pause,
+provider, blocklist) support chrome.storage.managed overrides labeled "Managed
+by your organization". Benchmark-Lite (in `benchmarks/`) records the first
+honest grouping baseline: pairwise F1 48.7% on the heuristics rung, with
+clicks-to-organized 42% below the manual baseline. The dedupe foundation is
+unchanged: every tab's URL is canonicalized into an *exact* key (same document,
+same view/state) and a *fuzzy* key (same document, different view/state); exact
+duplicates are silently focus-swapped and closed with a recoverable activity-log
+entry, fuzzy matches are never auto-closed but offer a manual keep-one cleanup,
+and pre-existing duplicates surface as a toolbar badge plus a "Needs attention"
+card. A 95-case golden corpus holds exact-tier precision at 100%.
 
 ## Build & try it
 
