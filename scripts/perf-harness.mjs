@@ -32,6 +32,7 @@ import { performance } from 'node:perf_hooks';
 import { launchChrome, makeProfileDir, removeProfileDir, chromeVersion } from './perf/chrome.mjs';
 import { startFixture } from './perf/fixture.mjs';
 import { SCENARIOS } from './perf/scenarios.mjs';
+import { waitForPerf } from './perf/worker.mjs';
 import { anyGateFailed, buildJsonReport, renderMarkdown, renderStdoutTable } from './perf/report.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -113,6 +114,50 @@ async function main() {
     extensionDir,
     log: (msg) => console.log(`[perf] ${msg}`),
   };
+
+  // Preflight: prove the extension actually loaded and its worker
+  // answers the diagnostics contract BEFORE burning scenario time.
+  // Branded Google Chrome >= 132 silently ignores --load-extension;
+  // when that happens every contract-dependent scenario fails slowly
+  // and misleadingly (and latency "passes" against an absent
+  // extension). Fail fast and loud instead. In CI, CHROME_BIN points
+  // at Chrome for Testing, which honors --load-extension.
+  {
+    const probeProfile = makeProfileDir();
+    let probe = null;
+    try {
+      probe = await launchChrome({
+        profileDir: probeProfile,
+        extensionDir,
+      });
+      // waitForPerf resolves null on timeout (it does not throw) —
+      // check the value, or this preflight would wave through the
+      // exact failure it exists to catch.
+      const perf = await waitForPerf(probe.cdp, 20_000);
+      if (!perf) {
+        throw new Error(
+          '__tabsensePerf() did not respond within 20 s',
+        );
+      }
+      console.log(
+        '[perf] preflight: extension worker + diagnostics contract OK',
+      );
+    } catch (err) {
+      console.error(`[perf] PREFLIGHT FAILED: ${err?.message ?? err}`);
+      console.error(
+        '[perf] The extension did not load or its service worker did ' +
+          'not answer __tabsensePerf(). If the resolved Chrome is a ' +
+          'branded Google Chrome build (>= 132), it ignores ' +
+          '--load-extension — point CHROME_BIN at Chrome for Testing.',
+      );
+      if (probe) await probe.close({ graceful: false }).catch(() => {});
+      removeProfileDir(probeProfile);
+      await fixture.close();
+      process.exit(2);
+    }
+    await probe.close({ graceful: false }).catch(() => {});
+    removeProfileDir(probeProfile);
+  }
 
   // Reports are rewritten after every scenario: the full suite runs
   // for ~25 minutes (churn dominates), and a CI timeout or kill must

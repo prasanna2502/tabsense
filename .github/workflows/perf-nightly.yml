@@ -14,7 +14,7 @@ jobs:
   perf-nightly:
     name: Perf nightly (full CDP harness)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -25,6 +25,15 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Chrome for Testing
+        # Branded Google Chrome >= 132 silently ignores
+        # --load-extension; Chrome for Testing honors it.
+        run: |
+          npx -y @puppeteer/browsers install chrome@stable --path "$RUNNER_TEMP/cft"
+          CHROME_BIN_PATH=$(echo "$RUNNER_TEMP"/cft/chrome/*/chrome-linux64/chrome)
+          echo "CHROME_BIN=$CHROME_BIN_PATH" >> "$GITHUB_ENV"
+          "$CHROME_BIN_PATH" --version
 
       - name: Typecheck
         run: npm run compile
