@@ -694,7 +694,7 @@ export default defineBackground(() => {
       console.warn('[tabsense] grouping pass failed:', err);
     } finally {
       groupingPassRunning = false;
-      void refreshSnapshot();
+      scheduleRefreshSnapshot();
       if (groupingPassDirty) {
         groupingPassDirty = false;
         scheduleGroupingPass();
@@ -850,7 +850,7 @@ export default defineBackground(() => {
     removeSuggestion(suggestionId);
     persistGroupState();
     scheduleGroupingPass();
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     return { applied: validIds.length };
   }
 
@@ -885,7 +885,7 @@ export default defineBackground(() => {
     });
     removeSuggestion(suggestionId);
     persistGroupState();
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     return { dismissed: true };
   }
 
@@ -935,7 +935,7 @@ export default defineBackground(() => {
     });
     persistGroupState();
     scheduleGroupingPass();
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     return { undone };
   }
 
@@ -960,7 +960,7 @@ export default defineBackground(() => {
     await chrome.storage.local.set({ [GROUPING_SETTINGS_KEY]: current });
     await reloadEffectiveSettings();
     scheduleGroupingPass();
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     return { applied: true, managed: false };
   }
 
@@ -1030,7 +1030,7 @@ export default defineBackground(() => {
       closedAt: doneAt,
       reason: 'auto-close',
     });
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
   }
 
   /**
@@ -1068,7 +1068,7 @@ export default defineBackground(() => {
         // Tab disappeared between validation and close — skip it.
       }
     }
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     return { closed };
   }
 
@@ -1118,7 +1118,7 @@ export default defineBackground(() => {
         }
       }
     }
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     return { closed };
   }
 
@@ -1165,7 +1165,7 @@ export default defineBackground(() => {
       }
     }
     // refreshSnapshot also recomputes the (exact-tier only) badge.
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     return { closed };
   }
 
@@ -1239,6 +1239,27 @@ export default defineBackground(() => {
     },
     lastGroupAction: null,
   };
+
+  // M3: snapshot persistence is coalesced. The snapshot is a UI
+  // mirror — the worker's own decisions never read it — but
+  // rebuilding and rewriting it on every tab event made the worker
+  // compete with page loads during open storms (the CDP harness
+  // measured that contention as added tab-open latency, worst under
+  // CPU throttling). Event-driven call sites schedule a refresh
+  // instead: at most one rebuild per coalesce window, trailing
+  // edge, so a burst of N events costs one rebuild. Flows that must
+  // answer the panel with fresh state (init, the snapshot request
+  // handler) still call refreshSnapshot() directly.
+  const SNAPSHOT_COALESCE_MS = 250;
+  let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function scheduleRefreshSnapshot(): void {
+    if (snapshotTimer !== null) return;
+    snapshotTimer = setTimeout(() => {
+      snapshotTimer = null;
+      scheduleRefreshSnapshot();
+    }, SNAPSHOT_COALESCE_MS);
+  }
 
   async function refreshSnapshot(): Promise<void> {
     // M3 diagnostics: keep the storage-bytes figure fresh (throttled
@@ -1440,7 +1461,7 @@ export default defineBackground(() => {
     } else {
       pendingQueue.length = 0;
     }
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
   });
 
   // ------------------------------------------------------------------
@@ -1452,7 +1473,7 @@ export default defineBackground(() => {
     if (tracked && tracked.exactKey !== null && tab.id !== undefined) {
       void evaluateDuplicate(tab.id, Date.now(), false);
     }
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     scheduleGroupingPass();
   });
 
@@ -1468,7 +1489,7 @@ export default defineBackground(() => {
     if (settled && tracked && tracked.exactKey !== null) {
       void evaluateDuplicate(tabId, Date.now(), false);
     }
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     if (settled || changeInfo.groupId !== undefined) {
       scheduleGroupingPass();
     }
@@ -1476,19 +1497,19 @@ export default defineBackground(() => {
 
   chrome.tabs.onRemoved.addListener((tabId) => {
     untrackTab(tabId);
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     scheduleGroupingPass();
   });
 
   chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
     const tracked = liveTabs.get(tabId);
     if (tracked) tracked.windowId = attachInfo.newWindowId;
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     scheduleGroupingPass();
   });
 
   chrome.tabs.onDetached.addListener(() => {
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     scheduleGroupingPass();
   });
 
@@ -1496,15 +1517,15 @@ export default defineBackground(() => {
   // our own accepts) re-run resolution and the pass. Manual groups
   // thereby stay hands-off automatically.
   chrome.tabGroups.onCreated.addListener(() => {
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     scheduleGroupingPass();
   });
   chrome.tabGroups.onUpdated.addListener(() => {
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     scheduleGroupingPass();
   });
   chrome.tabGroups.onRemoved.addListener(() => {
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
     scheduleGroupingPass();
   });
 
@@ -1514,7 +1535,7 @@ export default defineBackground(() => {
       .get(addedTabId)
       .then((tab) => trackTab(tab, true))
       .catch(() => undefined);
-    void refreshSnapshot();
+    scheduleRefreshSnapshot();
   });
 
   // ------------------------------------------------------------------
@@ -1616,7 +1637,7 @@ export default defineBackground(() => {
       void chrome.storage.local
         .set({ [SETTINGS_KEY]: autoCloseEnabled })
         .catch(() => undefined);
-      void refreshSnapshot();
+      scheduleRefreshSnapshot();
       sendResponse({ autoCloseEnabled });
       return undefined;
     }
@@ -1630,7 +1651,7 @@ export default defineBackground(() => {
     ) {
       void reloadEffectiveSettings()
         .then(() => {
-          void refreshSnapshot();
+          scheduleRefreshSnapshot();
           scheduleGroupingPass();
         })
         .catch(() => undefined);

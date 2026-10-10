@@ -53,4 +53,5 @@ jobs:
         with:
           name: perf-report-nightly
           path: .perf-results
+          include-hidden-files: true
           retention-days: 30

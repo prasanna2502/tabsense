@@ -84,6 +84,9 @@ jobs:
         with:
           name: perf-report
           path: .perf-results
+          # upload-artifact v4 skips dot-paths by default — without
+          # this the (successful) upload silently contained nothing.
+          include-hidden-files: true
 
   rust-core:
     name: Rust core (cargo test + wasm build)
