@@ -1,4 +1,5 @@
 import type { LadderRung } from './breaker';
+import type { DiagnosticsView } from './diagnostics';
 import { summarizeDuplicates, type DuplicateSummary } from './duplicates';
 import type { NanoAvailability } from './nano';
 import type { ProviderChoice, SettingSource } from './settings';
@@ -147,6 +148,10 @@ export interface TabSnapshot {
   /** M2: the most recent accepted grouping action, while undo is
    * offered for it in the panel. */
   lastGroupAction: { description: string; at: number } | null;
+  /** M3: locally measured overhead (self-diagnostics, §10.3) —
+   * rendered in Settings & details; never transmitted. Optional
+   * because snapshots persisted before M3 do not carry it. */
+  diagnostics?: DiagnosticsView;
 }
 
 /** One suggestion in the panel inbox (M2). Mirrors the worker's

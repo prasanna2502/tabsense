@@ -9,6 +9,7 @@ import {
 } from '../../src/lib/duplicates';
 import {
   describeMembers,
+  diagnosticsLines,
   faviconFallbackLetter,
   groupingStatusLine,
   hostLabel,
@@ -106,6 +107,7 @@ const autoCloseEl = document.getElementById(
 ) as HTMLInputElement | null;
 const coreStatusEl = document.getElementById('core-status');
 const swapStatsEl = document.getElementById('swap-stats');
+const perfDiagnosticsEl = document.getElementById('perf-diagnostics');
 const suggestedSectionEl = document.getElementById('suggested-groups');
 const groupingStatusEl = document.getElementById('grouping-status');
 const suggestionListEl = document.getElementById('suggestion-list');
@@ -1017,6 +1019,18 @@ function render(snapshot: TabSnapshot): void {
       swapStatsEl.textContent =
         `Focus swaps so far: ${s.count} · median ${fmtMs(s.medianMs)} · p95 ${fmtMs(s.p95Ms)}` +
         ` (${s.coldCount} while the core was starting, ${s.warmCount} after)`;
+    }
+  }
+  if (perfDiagnosticsEl) {
+    // M3 self-diagnostics. Snapshots persisted before M3 have no
+    // diagnostics block — render nothing extra in that case.
+    perfDiagnosticsEl.replaceChildren();
+    if (snapshot.diagnostics) {
+      for (const line of diagnosticsLines(snapshot.diagnostics)) {
+        const p = document.createElement('p');
+        p.textContent = line;
+        perfDiagnosticsEl.appendChild(p);
+      }
     }
   }
 }

@@ -29,6 +29,10 @@ import {
   type JudgeRequest,
   type NanoAvailability,
 } from '../src/lib/nano';
+import {
+  DurationRing,
+  type DiagnosticsView,
+} from '../src/lib/diagnostics';
 import { hostOf, type ScorerTabInput } from '../src/lib/scorer';
 import {
   GROUPING_SETTINGS_KEY,
@@ -158,6 +162,60 @@ export default defineBackground(() => {
   let swapSamples: SwapSample[] = [];
 
   // ------------------------------------------------------------------
+  // M3 self-diagnostics (§10.3). The instrumentation measures work
+  // the worker already does — two performance.now() reads around the
+  // canonical compute + index update in trackTab, and around the
+  // startup indexing loop. It adds no storage writes, no network,
+  // and no async work to the tab-open path; samples live in a
+  // capped in-memory ring.
+  // ------------------------------------------------------------------
+
+  const perfWorkerStartedAt = Date.now();
+  const dedupeRing = new DurationRing(200);
+  let perfRebuildMs: number | null = null;
+  let perfCoreReindexMs: number | null = null;
+  let perfAutoCloseCount = 0;
+  let perfStorageBytes: number | null = null;
+  let perfStorageBytesAt = 0;
+
+  function heapUsedMb(): number | null {
+    const mem = (performance as { memory?: { usedJSHeapSize?: number } })
+      .memory;
+    return typeof mem?.usedJSHeapSize === 'number'
+      ? mem.usedJSHeapSize / (1024 * 1024)
+      : null;
+  }
+
+  function currentDiagnostics(): DiagnosticsView {
+    const swapStats = summarizeSwaps(swapSamples);
+    return {
+      workerStartedAt: perfWorkerStartedAt,
+      rebuildMs: perfRebuildMs,
+      coreReindexMs: perfCoreReindexMs,
+      indexSize: exactIndex.size,
+      trackedTabs: liveTabs.size,
+      dedupeCheck: dedupeRing.stats(),
+      swaps: {
+        ...swapStats,
+        lastMs: swapSamples.length
+          ? swapSamples[swapSamples.length - 1].ms
+          : null,
+      },
+      autoCloseCount: perfAutoCloseCount,
+      storageBytes: perfStorageBytes,
+      heapUsedMb: heapUsedMb(),
+    };
+  }
+
+  // The CI perf harness reads the same numbers the settings UI
+  // shows — one measurement source, so the gate and the user-facing
+  // diagnostics can never disagree.
+  (globalThis as { __tabsensePerf?: unknown }).__tabsensePerf = () => ({
+    version: 1,
+    ...currentDiagnostics(),
+  });
+
+  // ------------------------------------------------------------------
   // M2 grouping state. Suggest mode only: the engine below builds a
   // suggestion inbox; tabs are grouped exclusively by the accept
   // handler, on an explicit panel click, after re-validation.
@@ -230,6 +288,12 @@ export default defineBackground(() => {
       previous.observed = previous.observed || observedNow;
       return previous;
     }
+    // M3 diagnostics: time exactly the synchronous work the perf
+    // constitution allows on this path — canonical-key compute plus
+    // the index update. Samples are taken only for live events
+    // (initialized), so the startup rebuild (timed separately as
+    // rebuildMs) does not pollute the per-event distribution.
+    const dedupeT0 = performance.now();
     if (previous) indexRemove(previous);
     const keys =
       !excluded && url !== '' ? canonicalKeys(url).keys : null;
@@ -248,6 +312,9 @@ export default defineBackground(() => {
     };
     liveTabs.set(tab.id, tracked);
     indexAdd(tracked);
+    if (keys && initialized) {
+      dedupeRing.push(performance.now() - dedupeT0);
+    }
     return tracked;
   }
 
@@ -947,6 +1014,7 @@ export default defineBackground(() => {
       // Already gone (user closed it first) — nothing to log.
       return;
     }
+    perfAutoCloseCount++;
     appendActivity({
       id: `${doneAt}-${dup.tabId}`,
       url: dup.url,
@@ -1167,6 +1235,18 @@ export default defineBackground(() => {
   };
 
   async function refreshSnapshot(): Promise<void> {
+    // M3 diagnostics: keep the storage-bytes figure fresh (throttled
+    // to one read per 30 s; snapshot refreshes are event-driven and
+    // off the tab-open path, and the read itself is async).
+    if (Date.now() - perfStorageBytesAt > 30_000) {
+      perfStorageBytesAt = Date.now();
+      chrome.storage.local
+        .getBytesInUse(null)
+        .then((bytes) => {
+          perfStorageBytes = bytes;
+        })
+        .catch(() => {});
+    }
     try {
       const rawTabs = await chrome.tabs.query({});
       const tabs: TabInfo[] = rawTabs
@@ -1246,6 +1326,7 @@ export default defineBackground(() => {
               at: lastGroupAction.at,
             }
           : null,
+        diagnostics: currentDiagnostics(),
       };
       await chrome.storage.local.set({ [SNAPSHOT_KEY]: current });
     } catch (err) {
@@ -1305,8 +1386,13 @@ export default defineBackground(() => {
       console.warn('[tabsense] settings load failed:', err),
     );
     try {
+      // M3: this loop is the "duplicate index rebuild on worker
+      // start" the budget measures — query + canonicalize + index
+      // for the whole pre-existing tab set.
+      const rebuildT0 = performance.now();
       const tabs = await chrome.tabs.query({});
       for (const tab of tabs) trackTab(tab, false);
+      perfRebuildMs = performance.now() - rebuildT0;
     } catch (err) {
       console.warn('[tabsense] initial tab index failed:', err);
     }
@@ -1326,6 +1412,7 @@ export default defineBackground(() => {
   // If it failed, the queue is dropped — no-auto-close mode.
   void ensureCoreReady().then((ok) => {
     if (ok) {
+      const reindexT0 = performance.now();
       exactIndex.clear();
       for (const t of liveTabs.values()) {
         if (!t.excluded && t.url !== '') {
@@ -1335,6 +1422,7 @@ export default defineBackground(() => {
         }
         indexAdd(t);
       }
+      perfCoreReindexMs = performance.now() - reindexT0;
       const queued = pendingQueue.splice(0);
       for (const { tabId, eventAt } of queued) {
         void evaluateDuplicate(tabId, eventAt, true);

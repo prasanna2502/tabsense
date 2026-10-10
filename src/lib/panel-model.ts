@@ -7,6 +7,12 @@
  * All tabs list.
  */
 
+import {
+  formatBytes,
+  formatMs,
+  type DiagnosticsView,
+} from './diagnostics';
+
 /** Host for display: "docs.google.com" — scheme, port, credentials,
  * and a leading "www." are dropped. Unparseable input is returned
  * trimmed (or "" when there is nothing to show). */
@@ -307,6 +313,38 @@ export function groupingStatusLine(grouping: {
     case 'domain-only':
       return 'Grouping: domain only';
   }
+}
+
+/** Self-diagnostics lines for Settings & details (M3, §10.3):
+ * the extension's overhead measured on this machine, in plain
+ * language. Pure builder so the copy is unit-testable. */
+export function diagnosticsLines(view: DiagnosticsView): string[] {
+  const lines: string[] = [];
+  if (view.dedupeCheck.count > 0) {
+    lines.push(
+      `Duplicate check: ${formatMs(view.dedupeCheck.medianMs)} typical, ` +
+        `${formatMs(view.dedupeCheck.p95Ms)} at worst (last ${view.dedupeCheck.count} checks)`,
+    );
+  } else {
+    lines.push('Duplicate check: no checks measured yet this session');
+  }
+  if (view.swaps.count > 0) {
+    lines.push(
+      `Last duplicate swap: ${formatMs(view.swaps.lastMs)} ` +
+        `(typical ${formatMs(view.swaps.medianMs)})`,
+    );
+  }
+  if (view.rebuildMs !== null) {
+    lines.push(
+      `Index rebuild at startup: ${formatMs(view.rebuildMs)} ` +
+        `for ${view.trackedTabs} tabs`,
+    );
+  }
+  lines.push(
+    `Duplicate index: ${view.indexSize} pages tracked · ` +
+      `local data: ${formatBytes(view.storageBytes)}`,
+  );
+  return lines;
 }
 
 /** Where a suggestion came from, in plain language. */
