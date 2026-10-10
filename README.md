@@ -4,13 +4,13 @@
 
 TabSense is a free, open-source Chrome extension that keeps a crowded tab strip under control. It stops duplicate tabs before they pile up, and it suggests named groups for the tabs you already have, all computed on your device and applied only when you approve them.
 
-See TabSense turn a 35-tab mess into named groups:
+See TabSense turn a 55-tab mess into named groups:
 
 
 
 
 
-https://github.com/user-attachments/assets/e993927a-e41e-492d-af03-75e1cabf777a
+https://github.com/user-attachments/assets/1727e6df-adf2-4e4e-8b38-5013a6745f87
 
 
 
