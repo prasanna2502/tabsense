@@ -13,6 +13,7 @@ import {
 } from '../src/lib/duplicates';
 import {
   capDismissals,
+  capGroupRecords,
   computeGroupSignature,
   dismissalSignature,
   groupKeyOf,
@@ -63,7 +64,9 @@ import {
   SWAP_SAMPLES_CAP,
   SWAP_SAMPLES_KEY,
   UNDO_GROUP_ACTION_MESSAGE,
+  appendCapped,
   isExcludedTab,
+  pushCapped,
   summarizeSwaps,
   type ActivityEntry,
   type GroupActivityEntry,
@@ -331,7 +334,7 @@ export default defineBackground(() => {
 
   let activityWrite: Promise<void> = Promise.resolve();
   function appendActivity(entry: ActivityEntry): void {
-    activity = [entry, ...activity].slice(0, ACTIVITY_CAP);
+    activity = appendCapped(activity, entry, ACTIVITY_CAP);
     const toStore = activity;
     activityWrite = activityWrite
       .then(() => chrome.storage.local.set({ [ACTIVITY_KEY]: toStore }))
@@ -340,7 +343,7 @@ export default defineBackground(() => {
 
   let swapWrite: Promise<void> = Promise.resolve();
   function recordSwap(sample: SwapSample): void {
-    swapSamples = [...swapSamples, sample].slice(-SWAP_SAMPLES_CAP);
+    swapSamples = pushCapped(swapSamples, sample, SWAP_SAMPLES_CAP);
     const toStore = swapSamples;
     swapWrite = swapWrite
       .then(() => chrome.storage.local.set({ [SWAP_SAMPLES_KEY]: toStore }))
@@ -355,6 +358,9 @@ export default defineBackground(() => {
 
   let groupStateWrite: Promise<void> = Promise.resolve();
   function persistGroupState(): void {
+    // M3 cap: group memory is bounded before every persist (and
+    // once at load, below) — live groups are never evicted.
+    groupRecords = capGroupRecords(groupRecords);
     const snapshotState = {
       [GROUPS_KEY]: groupRecords,
       [DISMISSED_KEY]: dismissals,
@@ -368,7 +374,7 @@ export default defineBackground(() => {
   }
 
   function appendGroupActivity(entry: GroupActivityEntry): void {
-    groupActivity = [entry, ...groupActivity].slice(0, GROUP_ACTIVITY_CAP);
+    groupActivity = appendCapped(groupActivity, entry, GROUP_ACTIVITY_CAP);
     // Mirror into the main activity log (the panel's Recently
     // closed filters on the close reasons, so grouping entries
     // never masquerade as closed tabs there).
@@ -1362,7 +1368,11 @@ export default defineBackground(() => {
       }
       autoCloseEnabled = stored[SETTINGS_KEY] !== false;
       if (Array.isArray(stored[GROUPS_KEY])) {
-        groupRecords = stored[GROUPS_KEY] as TabSenseGroupRecord[];
+        // Cap on load too: a store written before the cap existed
+        // (or grown by any path that missed persist) shrinks here.
+        groupRecords = capGroupRecords(
+          stored[GROUPS_KEY] as TabSenseGroupRecord[],
+        );
       }
       if (Array.isArray(stored[DISMISSED_KEY])) {
         dismissals = stored[DISMISSED_KEY] as DismissalRecord[];

@@ -225,6 +225,28 @@ export const GROUP_ACTIVITY_CAP = 100;
 export const ACTIVITY_CAP = 100;
 export const SWAP_SAMPLES_CAP = 100;
 
+/** Prepend-and-cap: the ring discipline of the activity logs
+ * (newest first, oldest evicted past the cap). Extracted as a pure
+ * helper in M3 so the cap behavior is unit-testable rather than
+ * only inspected in the worker. */
+export function appendCapped<T>(
+  list: readonly T[],
+  entry: T,
+  cap: number,
+): T[] {
+  return [entry, ...list].slice(0, cap);
+}
+
+/** Append-and-cap: the ring discipline of the swap samples
+ * (chronological order, oldest evicted past the cap). */
+export function pushCapped<T>(
+  list: readonly T[],
+  entry: T,
+  cap: number,
+): T[] {
+  return [...list, entry].slice(-cap);
+}
+
 export const GET_SNAPSHOT_MESSAGE = 'tabs:get-snapshot';
 export const CLOSE_DUPLICATE_SET_MESSAGE = 'tabs:close-duplicate-set';
 export const CLOSE_ALL_DUPLICATES_MESSAGE = 'tabs:close-all-duplicates';

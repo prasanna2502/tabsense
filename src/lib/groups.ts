@@ -100,6 +100,36 @@ export interface DismissalRecord {
 
 export const DISMISSAL_CAP = 200;
 
+/** Upper bound on retained group-memory records (M3). Before M3
+ * this store grew monotonically — every group ever created kept a
+ * record for the life of the profile. Records exist so a returning
+ * group can be recognized by name + exemplar signature; that value
+ * decays with age, and 200 records (~140 KB worst case) is far past
+ * any plausible working set of recurring groups. */
+export const GROUP_RECORDS_CAP = 200;
+
+/**
+ * Bound the group-memory store. Records whose Chrome group is live
+ * in this session are never evicted; dormant records are kept
+ * newest-updated first. Survivor order matches the input order.
+ * If live records alone exceed the cap (a >200-group session), the
+ * cap yields — live state is never dropped.
+ */
+export function capGroupRecords(
+  records: readonly TabSenseGroupRecord[],
+): TabSenseGroupRecord[] {
+  if (records.length <= GROUP_RECORDS_CAP) return [...records];
+  const live = records.filter((r) => r.chromeGroupId !== null);
+  const dormant = records
+    .filter((r) => r.chromeGroupId === null)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  const limit = Math.max(GROUP_RECORDS_CAP, live.length);
+  const kept = new Set(
+    [...live, ...dormant].slice(0, limit).map((r) => r.localId),
+  );
+  return records.filter((r) => kept.has(r.localId));
+}
+
 export function dismissalSignature(
   kind: 'new-group' | 'add-to-group',
   tabIds: readonly number[],
