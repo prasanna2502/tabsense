@@ -7,3 +7,4 @@ core/target/
 *.zip
 .DS_Store
 benchmarks/.build/
+.perf-results/

@@ -14,7 +14,7 @@
     "build:wasm": "node scripts/build-wasm.mjs",
     "compile": "tsc --noEmit",
     "dev": "wxt",
-    "perf:stub": "node scripts/perf-harness.mjs",
+    "perf": "node scripts/perf-harness.mjs",
     "postinstall": "wxt prepare",
     "test": "vitest run",
     "bench": "node benchmarks/run-benchmark.mjs"

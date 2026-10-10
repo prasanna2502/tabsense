@@ -1,0 +1,47 @@
+name: Perf nightly
+
+# The full perf suite runs per PR in the CI perf gate; this nightly
+# run is the soak/evidence trail for the M3 exit criterion — every
+# budget green in CI for two consecutive weeks of runs. Artifacts
+# are kept so the two-week history is auditable.
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+jobs:
+  perf-nightly:
+    name: Perf nightly (full CDP harness)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run compile
+
+      - name: Unit tests (incl. the M3 unit perf suite)
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Perf gate (CDP harness vs perf-budgets.json)
+        run: npm run perf
+
+      - name: Upload perf report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-report-nightly
+          path: .perf-results
+          retention-days: 30

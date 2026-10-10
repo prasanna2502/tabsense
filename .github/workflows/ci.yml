@@ -26,9 +26,6 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - name: Perf budgets (stub harness reads perf-budgets.json)
-        run: npm run perf:stub
-
       - name: Production build
         run: npm run build
 
@@ -37,6 +34,46 @@ jobs:
         with:
           name: tabsense-extension
           path: .output/chrome-mv3
+
+  perf:
+    name: Perf gate (CDP harness + budgets)
+    runs-on: ubuntu-latest
+    # The harness drives a real Chrome over CDP and compares the
+    # extension against itself-off in the same job (relative-first;
+    # perf-budgets.json absolutes are tripwires). A red perf job
+    # blocks merge exactly like a failing test.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22: the harness uses the built-in global WebSocket
+          # for CDP — zero new dependencies.
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run compile
+
+      - name: Unit tests (incl. the M3 unit perf suite)
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Perf gate (CDP harness vs perf-budgets.json)
+        run: npm run perf
+
+      - name: Upload perf report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-report
+          path: .perf-results
 
   rust-core:
     name: Rust core (cargo test + wasm build)
