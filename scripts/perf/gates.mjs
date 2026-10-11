@@ -84,6 +84,83 @@ export function pooledP95Delta(onRoundSamples, offRoundSamples) {
   };
 }
 
+const isFiniteNumber = (v) => typeof v === 'number' && Number.isFinite(v);
+
+/**
+ * One ABBA quartet of latency blocks (M3 gate design change,
+ * user-approved 2026-10-11). A quartet is four consecutive blocks
+ * in which positions 0 and 3 share one condition and positions 1
+ * and 2 share the other — ABBA (off, on, on, off) or its mirror
+ * BAAB. The quartet's paired delta is mean(on block medians) minus
+ * mean(off block medians). The two conditions' time centroids
+ * coincide within a quartet (outer positions 0/3 average to 1.5,
+ * inner positions 1/2 average to 1.5), so any linear drift in
+ * runner speed across the quartet shifts both condition means by
+ * the same amount and cancels in the difference — the property
+ * the sequential block design (full baseline run, then full
+ * extension run) lacked. Returns null for anything that is not a
+ * well-formed quartet: wrong length, a condition outside
+ * {'on','off'}, a non-ABBA pattern, or a missing/non-finite block
+ * median (e.g. a block whose samples all timed out).
+ */
+function abbaQuartetDelta(group) {
+  if (!Array.isArray(group) || group.length !== 4) return null;
+  const [a, b, c, d] = group;
+  if (![a, b, c, d].every((blk) => blk && isFiniteNumber(blk.medianMs))) return null;
+  const outer = a.condition;
+  const inner = b.condition;
+  if (c.condition !== inner || d.condition !== outer || outer === inner) return null;
+  if (!(outer === 'on' || outer === 'off') || !(inner === 'on' || inner === 'off')) return null;
+  const outerMean = (a.medianMs + d.medianMs) / 2;
+  const innerMean = (b.medianMs + c.medianMs) / 2;
+  const on = outer === 'on' ? outerMean : innerMean;
+  const off = outer === 'on' ? innerMean : outerMean;
+  return { on, off, delta: on - off };
+}
+
+/**
+ * Paired ABBA deltas for one round's ordered block list
+ * (`[{condition: 'on'|'off', medianMs}, ...]`). Blocks are grouped
+ * into consecutive quartets; a quartet that is not well-formed
+ * (see abbaQuartetDelta) and any trailing partial group are
+ * dropped and counted in `droppedBlocks` — never silently paired
+ * across a gap.
+ */
+export function abbaQuartetDeltas(blocks) {
+  const list = blocks ?? [];
+  const quartets = [];
+  let droppedBlocks = list.length % 4;
+  for (let i = 0; i + 4 <= list.length; i += 4) {
+    const q = abbaQuartetDelta(list.slice(i, i + 4));
+    if (q) quartets.push(q);
+    else droppedBlocks += 4;
+  }
+  return { quartets, diffsMs: quartets.map((q) => q.delta), droppedBlocks };
+}
+
+/**
+ * The gated statistic for the added-latency MEDIAN budgets (warm
+ * and throttled) under the interleaved design: the median of the
+ * paired block differences, pooling every round's ABBA-quartet
+ * deltas. `roundBlocks` is an array of per-round ordered block
+ * lists; quartets never span rounds (each round runs its own
+ * browser pair). A run with no well-formed quartet yields a null
+ * delta, which fails the gate via compareBudget — a missing
+ * measurement is a failure, not a pass.
+ */
+export function pairedBlockMedianDelta(roundBlocks) {
+  const diffsMs = [];
+  let pairCount = 0;
+  let droppedBlocks = 0;
+  for (const blocks of roundBlocks ?? []) {
+    const r = abbaQuartetDeltas(blocks);
+    diffsMs.push(...r.diffsMs);
+    pairCount += r.quartets.length;
+    droppedBlocks += r.droppedBlocks;
+  }
+  return { pairCount, droppedBlocks, diffsMs, delta: median(diffsMs) };
+}
+
 /**
  * The ratified churn checks (perf-budgets.json v2, 2026-10-11):
  * two explicit bounds replace the former "~zero slope" wording —
