@@ -79,3 +79,46 @@ median flickered to 10.351 ms against its <10 ms line.
 
 _Updated when the PR's CI run completes — see the addendum at the
 end of this file._
+
+## CI outcome — PR #2, run 38152995111 (2026-10-11)
+
+Extension job PASS, Rust job PASS. Perf gate job: **FAIL by one
+row** (58m16s). Row by row against perf-budgets.json v2:
+
+| Check | Measured | Budget | Result |
+| --- | --- | --- | --- |
+| Warm added latency, median (median of 5 rounds) | 1.59 ms | < 10 ms | PASS |
+| Warm added latency, p95 (median of 5 rounds) | 3.61 ms | < 25 ms | PASS |
+| Throttled added latency, median (median of 5 rounds) | -5.54 ms | < 10 ms | PASS |
+| **Throttled added latency, p95 (median of 5 rounds)** | **101.07 ms** | **< 25 ms** | **FAIL** |
+| Cold added latency, median / p95 (informational) | 0.57 / -3.81 ms | < 10 / < 25 ms | PASS |
+| Swap landed, all rounds | 3 of 3 rounds | — | PASS |
+| Swap duplicate closed, all rounds | 3 of 3 rounds | — | PASS |
+| Slowest focus-swap (counted samples) | 14 ms | < 150 ms | PASS |
+| Marginal memory per tab | 0.525 KB | < 20 KB | PASS |
+| Worker heap at 500 tabs (and after restore) | 3.41 / 3.36 MB | < 50 MB | PASS |
+| Index rebuild, 500-tab restore | 19.7 ms | < 100 ms | PASS |
+| Restored tabs auto-closed | 0 | = 0 | PASS |
+| Restore storm: 300/300 restored, 0 auto-closed | — | — | PASS |
+| **Churn leak slope (ratified)** | **0.011 KB/cycle** | **<= 0.03 KB/cycle** | **PASS** |
+| **Churn total growth (ratified)** | **0.057 MB** | **< 2 MB** | **PASS** |
+| Idle: worker network requests / CPU in 15 s | 0 / 0.002 s | = 0 | PASS |
+
+**The M3 exit clock has NOT started** — the criterion is every
+budget green, and the throttled p95 row is red.
+
+Reading the failure: the per-round throttled p95 deltas were
+-116.21, +203.64, +107.91, +5.11, +101.07 ms (median 101.07),
+while the throttled *median* deltas were small or negative in 4
+of 5 rounds and the warm p95 deltas clustered tightly
+(-1.75…+5.86 ms). Each round's throttled p95 delta is a
+difference of two tail order statistics over ~39 samples under
+4x CPU throttling on a shared runner; the extension's own
+per-tab work measures 0.0067 ms p95 in the unit corpus and the
+warm profile — same code path — shows no such tail. The pattern
+implicates the statistic (p95-of-small-samples differencing
+under throttling), not extension code. No further tuning was
+applied in this branch; what to do about this row is a fresh
+decision (larger throttled batches, a pooled-percentile
+statistic, or a throttled-specific budget shape) — deliberately
+not made here.
