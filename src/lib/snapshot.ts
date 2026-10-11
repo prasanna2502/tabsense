@@ -49,6 +49,7 @@ export interface ActivityEntry {
   reason:
     | 'auto-close'
     | 'bulk-close'
+    | 'kept-intentional'
     | 'group-accept'
     | 'group-dismiss'
     | 'group-undo';
@@ -194,11 +195,13 @@ export interface SettingsView {
   provider: ProviderChoice;
   /** The blocklist in force (defaults resolved). */
   blocklist: string[];
+  keepIntentionalDuplicates: boolean;
   sources: {
     autoCloseEnabled: SettingSource;
     groupingPaused: SettingSource;
     provider: SettingSource;
     blocklist: SettingSource;
+    keepIntentionalDuplicates: SettingSource;
   };
   managedKeys: string[];
 }
@@ -260,6 +263,8 @@ export const SET_AUTO_CLOSE_MESSAGE = 'settings:set-auto-close';
 export const ACCEPT_SUGGESTION_MESSAGE = 'suggestions:accept';
 export const DISMISS_SUGGESTION_MESSAGE = 'suggestions:dismiss';
 export const UNDO_GROUP_ACTION_MESSAGE = 'suggestions:undo';
+export const SET_KEEP_INTENTIONAL_DUPLICATES_MESSAGE =
+  'settings:set-keep-intentional-duplicates';
 export const SET_GROUPING_PAUSED_MESSAGE = 'settings:set-grouping-paused';
 export const SET_PROVIDER_MESSAGE = 'settings:set-provider';
 export const SET_BLOCKLIST_MESSAGE = 'settings:set-blocklist';

@@ -13,8 +13,9 @@
  * Local layout (back-compatible with M1):
  *  - `autoCloseEnabled` (boolean) — the M1 key, unchanged.
  *  - `groupingSettings` (object) — { groupingPaused, provider,
- *    blocklist }. `blocklist: null` means "use the default list";
- *    an array (even empty) is the user's own list.
+ *    blocklist, keepIntentionalDuplicates }. `blocklist: null`
+ *    means "use the default list"; an array (even empty) is the
+ *    user's own list.
  */
 
 import { DEFAULT_BLOCKLIST } from './blocklist';
@@ -29,6 +30,10 @@ export interface GroupingSettings {
   provider: ProviderChoice;
   /** null = default blocklist; otherwise the user's list verbatim. */
   blocklist: string[] | null;
+  /** Phase 2: keep tabs the user duplicated on purpose (the
+   * browser's Duplicate command on the active tab) instead of
+   * auto-closing them. Default on. */
+  keepIntentionalDuplicates: boolean;
 }
 
 export type SettingSource = 'local' | 'managed';
@@ -39,12 +44,14 @@ export interface EffectiveSettings {
   provider: ProviderChoice;
   /** The blocklist in force (default list resolved). */
   blocklist: string[];
+  keepIntentionalDuplicates: boolean;
   /** Where each effective value came from. */
   sources: {
     autoCloseEnabled: SettingSource;
     groupingPaused: SettingSource;
     provider: SettingSource;
     blocklist: SettingSource;
+    keepIntentionalDuplicates: SettingSource;
   };
   /** Field names currently forced by policy (for UI labeling). */
   managedKeys: string[];
@@ -61,6 +68,7 @@ const DEFAULTS: GroupingSettings = {
   groupingPaused: false,
   provider: 'nano',
   blocklist: null,
+  keepIntentionalDuplicates: true,
 };
 
 function sanitizeGrouping(raw: unknown): Partial<GroupingSettings> {
@@ -69,6 +77,9 @@ function sanitizeGrouping(raw: unknown): Partial<GroupingSettings> {
   const out: Partial<GroupingSettings> = {};
   if (typeof obj.groupingPaused === 'boolean') {
     out.groupingPaused = obj.groupingPaused;
+  }
+  if (typeof obj.keepIntentionalDuplicates === 'boolean') {
+    out.keepIntentionalDuplicates = obj.keepIntentionalDuplicates;
   }
   if (obj.provider === 'nano' || obj.provider === 'heuristics') {
     out.provider = obj.provider;
@@ -106,6 +117,7 @@ export async function loadEffectiveSettings(
     groupingPaused: 'local',
     provider: 'local',
     blocklist: 'local',
+    keepIntentionalDuplicates: 'local',
   };
   const managedKeys: string[] = [];
 
@@ -129,10 +141,18 @@ export async function loadEffectiveSettings(
         : localGroup.blocklist !== undefined
           ? localGroup.blocklist
           : DEFAULTS.blocklist,
+    keepIntentionalDuplicates:
+      managedGroup.keepIntentionalDuplicates ??
+      localGroup.keepIntentionalDuplicates ??
+      DEFAULTS.keepIntentionalDuplicates,
   };
   if (managedGroup.groupingPaused !== undefined) {
     sources.groupingPaused = 'managed';
     managedKeys.push('groupingPaused');
+  }
+  if (managedGroup.keepIntentionalDuplicates !== undefined) {
+    sources.keepIntentionalDuplicates = 'managed';
+    managedKeys.push('keepIntentionalDuplicates');
   }
   if (managedGroup.provider !== undefined) {
     sources.provider = 'managed';
@@ -148,6 +168,7 @@ export async function loadEffectiveSettings(
     groupingPaused: merged.groupingPaused,
     provider: merged.provider,
     blocklist: merged.blocklist ?? [...DEFAULT_BLOCKLIST],
+    keepIntentionalDuplicates: merged.keepIntentionalDuplicates,
     sources,
     managedKeys,
   };

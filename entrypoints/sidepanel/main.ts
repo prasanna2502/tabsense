@@ -29,6 +29,7 @@ import {
   GET_SNAPSHOT_MESSAGE,
   NANO_DOWNLOAD_PROGRESS_MESSAGE,
   SET_AUTO_CLOSE_MESSAGE,
+  SET_KEEP_INTENTIONAL_DUPLICATES_MESSAGE,
   SET_BLOCKLIST_MESSAGE,
   SET_GROUPING_PAUSED_MESSAGE,
   SET_PROVIDER_MESSAGE,
@@ -107,6 +108,9 @@ const settingsSectionEl = document.getElementById(
 ) as HTMLDetailsElement | null;
 const autoCloseEl = document.getElementById(
   'opt-autoclose',
+) as HTMLInputElement | null;
+const keepIntentionalEl = document.getElementById(
+  'opt-keep-intentional',
 ) as HTMLInputElement | null;
 const coreStatusEl = document.getElementById('core-status');
 const swapStatsEl = document.getElementById('swap-stats');
@@ -995,11 +999,16 @@ function render(snapshot: TabSnapshot): void {
     );
   }
 
-  // Recently closed (activity log) with Reopen. Grouping entries
+  // Recently closed (activity log) with Reopen, plus kept
+  // intentional duplicates (nothing was closed for those — the row
+  // says so, and there is no Reopen). Grouping entries
   // (group-accept / group-dismiss / group-undo) share the persisted
   // log but are not closed tabs — they never appear here.
   const closeActivity = snapshot.activity.filter(
-    (e) => e.reason === 'auto-close' || e.reason === 'bulk-close',
+    (e) =>
+      e.reason === 'auto-close' ||
+      e.reason === 'bulk-close' ||
+      e.reason === 'kept-intentional',
   );
   if (activitySectionEl && activityListEl) {
     activitySectionEl.hidden = closeActivity.length === 0;
@@ -1019,19 +1028,24 @@ function render(snapshot: TabSnapshot): void {
         const sub = document.createElement('span');
         sub.className = 'row-sub';
         const when = new Date(entry.closedAt).toLocaleTimeString();
-        sub.textContent = `${when} · ${hostLabel(entry.url)}`;
+        const kept = entry.reason === 'kept-intentional';
+        sub.textContent = kept
+          ? `${when} · Kept — looks like an intentional duplicate`
+          : `${when} · ${hostLabel(entry.url)}`;
         main.append(title, sub);
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.textContent = 'Reopen';
-        button.addEventListener('click', () => {
-          void chrome.tabs.create({ url: entry.url });
-        });
         li.append(
           faviconEl({ favIconUrl: '', title: entry.title, url: entry.url }),
           main,
-          button,
         );
+        if (!kept) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = 'Reopen';
+          button.addEventListener('click', () => {
+            void chrome.tabs.create({ url: entry.url });
+          });
+          li.append(button);
+        }
         return li;
       }),
     );
@@ -1053,6 +1067,19 @@ function render(snapshot: TabSnapshot): void {
       snapshot.settingsView.managedKeys.includes('autoCloseEnabled');
   }
   renderManagedNote('managed-autoclose', snapshot, 'autoCloseEnabled');
+  if (keepIntentionalEl) {
+    keepIntentionalEl.checked =
+      snapshot.settingsView.keepIntentionalDuplicates;
+    keepIntentionalEl.disabled =
+      snapshot.settingsView.managedKeys.includes(
+        'keepIntentionalDuplicates',
+      );
+  }
+  renderManagedNote(
+    'managed-keep-intentional',
+    snapshot,
+    'keepIntentionalDuplicates',
+  );
 
   // Grouping settings (M2): pause toggle, provider, AI status,
   // blocklist editor — all with managed-precedence labeling.
@@ -1191,6 +1218,18 @@ if (groupUndoBtn) {
     groupUndoBtn.disabled = true;
     void chrome.runtime
       .sendMessage({ type: UNDO_GROUP_ACTION_MESSAGE })
+      .catch(() => undefined)
+      .finally(() => void loadInitial());
+  });
+}
+
+if (keepIntentionalEl) {
+  keepIntentionalEl.addEventListener('change', () => {
+    void chrome.runtime
+      .sendMessage({
+        type: SET_KEEP_INTENTIONAL_DUPLICATES_MESSAGE,
+        enabled: keepIntentionalEl.checked,
+      })
       .catch(() => undefined)
       .finally(() => void loadInitial());
   });

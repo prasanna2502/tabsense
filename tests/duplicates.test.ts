@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { summarizeDuplicates } from '../src/lib/duplicates';
+import {
+  DuplicateExemptions,
+  isIntentionalDuplicate,
+  shouldKeepIntentionalDuplicate,
+  summarizeDuplicates,
+  type IntentionalDuplicateEvidence,
+} from '../src/lib/duplicates';
 
 describe('summarizeDuplicates', () => {
   it('reports zero duplicates for all-unique URLs', () => {
@@ -56,5 +62,103 @@ describe('summarizeDuplicates', () => {
       duplicateTabs: 0,
       groups: [],
     });
+  });
+});
+
+describe('intentional-duplicate fingerprint (Phase 2)', () => {
+  // A Duplicate-command creation as the worker observes it: the
+  // active tab 10 (index 3) spawns a copy of the same canonical page
+  // at index 4, with openerTabId pointing back at tab 10.
+  const duplicateCommand: IntentionalDuplicateEvidence = {
+    newExactKey: 'https://example.com/page',
+    sourceExactKey: 'https://example.com/page',
+    openerTabId: 10,
+    sourceTabId: 10,
+    newIndex: 4,
+    sourceIndex: 3,
+    sameWindow: true,
+    sourceWasActive: true,
+  };
+
+  it('a simulated Duplicate-command creation is kept (never auto-closed)', () => {
+    expect(isIntentionalDuplicate(duplicateCommand)).toBe(true);
+    expect(shouldKeepIntentionalDuplicate(duplicateCommand, true)).toBe(true);
+  });
+
+  it('an omnibox-style re-open (no opener) still auto-closes', () => {
+    expect(
+      isIntentionalDuplicate({ ...duplicateCommand, openerTabId: null }),
+    ).toBe(false);
+    expect(
+      isIntentionalDuplicate({ ...duplicateCommand, openerTabId: undefined }),
+    ).toBe(false);
+  });
+
+  it('an opener that is not the source tab still auto-closes', () => {
+    expect(
+      isIntentionalDuplicate({ ...duplicateCommand, openerTabId: 99 }),
+    ).toBe(false);
+  });
+
+  it('a non-adjacent copy still auto-closes', () => {
+    expect(
+      isIntentionalDuplicate({ ...duplicateCommand, newIndex: 7 }),
+    ).toBe(false);
+    expect(
+      isIntentionalDuplicate({ ...duplicateCommand, newIndex: 3 }),
+    ).toBe(false);
+  });
+
+  it('duplicating a background (inactive) tab still auto-closes', () => {
+    expect(
+      isIntentionalDuplicate({ ...duplicateCommand, sourceWasActive: false }),
+    ).toBe(false);
+  });
+
+  it('a copy in another window, or of a different page, still auto-closes', () => {
+    expect(
+      isIntentionalDuplicate({ ...duplicateCommand, sameWindow: false }),
+    ).toBe(false);
+    expect(
+      isIntentionalDuplicate({
+        ...duplicateCommand,
+        newExactKey: 'https://example.com/other',
+      }),
+    ).toBe(false);
+    expect(
+      isIntentionalDuplicate({ ...duplicateCommand, newExactKey: null }),
+    ).toBe(false);
+  });
+
+  it('toggle OFF restores closing even for a perfect fingerprint', () => {
+    expect(shouldKeepIntentionalDuplicate(duplicateCommand, false)).toBe(false);
+  });
+});
+
+describe('DuplicateExemptions lifecycle', () => {
+  it('exempts only the marked tab, only at the marked canonical URL', () => {
+    const ex = new DuplicateExemptions();
+    ex.mark(11, 'https://example.com/page');
+    expect(ex.retain(11, 'https://example.com/page')).toBe(true);
+    // Not a per-URL blanket exemption: another tab at the same URL
+    // follows the normal rules.
+    expect(ex.retain(12, 'https://example.com/page')).toBe(false);
+    expect(ex.has(11)).toBe(true);
+  });
+
+  it('the exemption ends when the tab navigates to a different canonical URL', () => {
+    const ex = new DuplicateExemptions();
+    ex.mark(11, 'https://example.com/page');
+    expect(ex.retain(11, 'https://example.com/elsewhere')).toBe(false);
+    // …and it stays ended: navigating back does not revive it.
+    expect(ex.retain(11, 'https://example.com/page')).toBe(false);
+    expect(ex.has(11)).toBe(false);
+  });
+
+  it('forget drops the exemption (tab closed)', () => {
+    const ex = new DuplicateExemptions();
+    ex.mark(11, 'https://example.com/page');
+    ex.forget(11);
+    expect(ex.retain(11, 'https://example.com/page')).toBe(false);
   });
 });
