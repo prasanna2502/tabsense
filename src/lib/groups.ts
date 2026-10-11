@@ -15,7 +15,54 @@
  * criterion A2).
  */
 
-import { hostOf, type ScorerTabInput } from './scorer';
+import {
+  PLATFORM_GROUP_NAMES,
+  hostOf,
+  isMultiDocHost,
+  type ScorerTabInput,
+} from './scorer';
+
+const DOMAIN_TLDS = new Set([
+  'com', 'net', 'org', 'io', 'so', 'dev', 'app', 'ai', 'co', 'us',
+  'uk', 'de', 'jp',
+]);
+
+/**
+ * Whether a proposed group name is just a platform/domain name —
+ * "Google", "Google Docs", "docs.google.com", "Notion" — rather
+ * than a topic (Phase 3). Such names are invalid output for group
+ * naming, from the judge and from the heuristics alike: they say
+ * where the tabs live, not what they are about. When the tabs
+ * share a multi-doc platform host, that host's own labels (the
+ * host itself, its registrable domain and label, and its app
+ * label, e.g. "docs" for docs.google.com) count as platform names
+ * too; a name shaped like a bare domain is never a topic name
+ * either.
+ */
+export function isPlatformGroupName(
+  name: string,
+  sharedHost?: string | null,
+): boolean {
+  const n = name.trim().toLowerCase();
+  if (n === '') return false;
+  if (PLATFORM_GROUP_NAMES.has(n)) return true;
+  if (
+    /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(n) &&
+    DOMAIN_TLDS.has(n.split('.').pop() as string)
+  ) {
+    return true;
+  }
+  if (sharedHost && isMultiDocHost(sharedHost)) {
+    const labels = sharedHost.split('.');
+    if (n === sharedHost) return true;
+    if (labels.length >= 2) {
+      if (n === labels.slice(-2).join('.')) return true;
+      if (n === labels[labels.length - 2]) return true;
+    }
+    if (n === labels[0]) return true;
+  }
+  return false;
+}
 
 export interface TabSenseGroupRecord {
   /** Stable local identity, assigned at creation. */

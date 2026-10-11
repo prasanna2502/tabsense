@@ -24,12 +24,17 @@ import { isBlocklisted } from './blocklist';
 import {
   dismissalSignature,
   groupKeyOf,
+  isPlatformGroupName,
   type DismissalRecord,
   type TabSenseGroupRecord,
 } from './groups';
 import type { JudgeRequest, NanoVerdict } from './nano';
 import {
+  CLUSTER_THRESHOLD,
+  cleanTitle,
   hostOf,
+  isMultiDocHost,
+  tokenize,
   type Scorer,
   type ScorerGroupInput,
   type ScorerTabInput,
@@ -66,6 +71,10 @@ export interface SuggestionDraft {
   /** True when Nano was consulted, its output failed validation,
    * and this draft is the heuristics fallback (reduced confidence). */
   nanoFallback: boolean;
+  /** True when this draft is one sub-group of a Nano judge
+   * partition (a `split` verdict) rather than an accepted
+   * heuristic cluster (Phase 3). */
+  fromPartition?: boolean;
 }
 
 export interface EngineInput {
@@ -88,6 +97,59 @@ function titleCaseSeed(seed: string): string {
 function hostTopicName(url: string): string {
   const label = hostOf(url).split('.')[0] ?? '';
   return titleCaseSeed(label);
+}
+
+/** The host every member shares, or null when they span hosts. */
+function sharedHostOf(tabs: readonly ScorerTabInput[]): string | null {
+  if (tabs.length === 0) return null;
+  const host = hostOf(tabs[0].url);
+  return tabs.every((t) => hostOf(t.url) === host) ? host : null;
+}
+
+/** The most frequent cleaned-title token across members that is
+ * not itself a platform name — the honest topic word to name a
+ * cluster after when the scorer's seed is unusable. The token must
+ * appear in at least two member titles. */
+function frequentTopicToken(
+  tabs: readonly ScorerTabInput[],
+  sharedHost: string | null,
+): string | null {
+  const counts = new Map<string, number>();
+  for (const t of tabs) {
+    for (const token of tokenize(cleanTitle(t.title))) {
+      counts.set(token, (counts.get(token) ?? 0) + 1);
+    }
+  }
+  let best: string | null = null;
+  let bestCount = 1; // must exceed one appearance
+  for (const [token, count] of [...counts].sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    if (count <= bestCount) continue;
+    if (isPlatformGroupName(token, sharedHost)) continue;
+    best = token;
+    bestCount = count;
+  }
+  return best;
+}
+
+/** Name for a heuristic cluster under the platform-name ban
+ * (Phase 3): the scorer's seed, else the members' most frequent
+ * topic token, else a host-derived name — each accepted only when
+ * it is not just a platform/domain name. Last resort is the
+ * neutral 'New group'. */
+function clusterGroupName(
+  members: readonly ScorerTabInput[],
+  nameSeed: string,
+): string {
+  const sharedHost = sharedHostOf(members);
+  const seed = titleCaseSeed(nameSeed);
+  if (seed !== '' && !isPlatformGroupName(seed, sharedHost)) return seed;
+  const token = frequentTopicToken(members, sharedHost);
+  if (token) return titleCaseSeed(token);
+  const hostName = hostTopicName(members[0].url);
+  if (!isPlatformGroupName(hostName, sharedHost)) return hostName;
+  return 'New group';
 }
 
 function isEligible(tab: EngineTab, blocklist: readonly string[]): boolean {
@@ -144,6 +206,11 @@ function domainOnlyDrafts(
   }
   for (const [host, bucket] of byHost) {
     if (bucket.length < 2) continue;
+    const bucketName = titleCaseSeed(host.split('.')[0] ?? '') || 'New group';
+    // Platform buckets are the failure mode this rung must not
+    // reproduce: a "Docs"/"Notion" bucket is a domain name, not a
+    // topic (Phase 3) — those tabs get no bucket suggestion here.
+    if (isPlatformGroupName(bucketName, host)) continue;
     drafts.push({
       kind: 'new-group',
       windowId,
@@ -151,7 +218,7 @@ function domainOnlyDrafts(
       tabs: bucket,
       targetGroupKey: null,
       targetGroupName: null,
-      proposedName: titleCaseSeed(host.split('.')[0] ?? '') || 'New group',
+      proposedName: bucketName,
       confidence: 0.5,
       source: 'domain-only',
       nanoFallback: false,
@@ -165,6 +232,7 @@ function heuristicDrafts(
   groups: readonly EngineGroup[],
   scorer: Scorer,
   windowId: number,
+  capMegaClusters: boolean,
 ): SuggestionDraft[] {
   const drafts: SuggestionDraft[] = [];
   const groupInputs: ScorerGroupInput[] = groups.map((g) => ({
@@ -175,10 +243,22 @@ function heuristicDrafts(
 
   const clustered = new Set<number>();
   for (const cluster of scorer.clusterTabs(eligible)) {
-    const members = cluster.tabIds
+    let members = cluster.tabIds
       .map((id) => eligible.find((t) => t.id === id))
       .filter((t): t is EngineTab => t !== undefined);
     if (members.length < 2) continue;
+    // Router handoff cap (Phase 3): without a judge to partition
+    // them, transitively-merged mega-clusters from one multi-doc
+    // platform are not presented as single drafts — the draft is
+    // capped at the split threshold and the remaining members
+    // stay eligible for add-to-group routing. On the nano rung
+    // the full pool goes to the judge's partition instead.
+    if (capMegaClusters && members.length > SPLIT_EVAL_SIZE) {
+      const shared = sharedHostOf(members);
+      if (shared !== null && isMultiDocHost(shared)) {
+        members = members.slice(0, SPLIT_EVAL_SIZE);
+      }
+    }
     for (const m of members) clustered.add(m.id);
     drafts.push({
       kind: 'new-group',
@@ -187,10 +267,7 @@ function heuristicDrafts(
       tabs: members,
       targetGroupKey: null,
       targetGroupName: null,
-      proposedName:
-        titleCaseSeed(cluster.nameSeed) ||
-        hostTopicName(members[0].url) ||
-        'New group',
+      proposedName: clusterGroupName(members, cluster.nameSeed),
       confidence: cluster.cohesion,
       source: 'heuristics',
       nanoFallback: false,
@@ -243,7 +320,13 @@ export function buildSuggestions(input: EngineInput): SuggestionDraft[] {
     const drafts =
       input.rung === 'domain-only'
         ? domainOnlyDrafts(eligible, groups, windowId)
-        : heuristicDrafts(eligible, groups, input.scorer, windowId);
+        : heuristicDrafts(
+            eligible,
+            groups,
+            input.scorer,
+            windowId,
+            input.rung !== 'nano',
+          );
     const kept = drafts
       .filter((d) => !dismissed.has(draftSignature(d)))
       .sort(
@@ -259,6 +342,60 @@ export function buildSuggestions(input: EngineInput): SuggestionDraft[] {
       a.windowId - b.windowId ||
       a.tabIds[0] - b.tabIds[0],
   );
+}
+
+// -------------------------------------------------------------------
+// Engine-change invalidation (Phase 3)
+// -------------------------------------------------------------------
+
+/** Identity of the engine that produces suggestions: the selected
+ * provider plus the ladder rung a pass actually ran on. A breaker
+ * trip or recovery changes the rung; a provider switch changes
+ * both halves — either way the identity changes. */
+export function groupingEngineKey(
+  provider: string,
+  rung: LadderRung,
+): string {
+  return `${provider}:${rung}`;
+}
+
+/**
+ * Tracks which engine produced the pending (un-acted) suggestions
+ * in the inbox. When a pass runs under a different engine, the
+ * pending suggestions are stale — they were generated by different
+ * rules and may embody exactly the failure the engine change
+ * fixed — so they are discarded (and the discard logged) before
+ * the pass regenerates fresh ones. Acted-on suggestions are
+ * already out of the pending set by then; they are history and are
+ * never touched.
+ */
+export class SuggestionEngineGuard {
+  private producedBy: string | null = null;
+
+  get engineKey(): string | null {
+    return this.producedBy;
+  }
+
+  /** Restore the persisted identity at worker start. */
+  restore(engineKey: string | null): void {
+    this.producedBy = engineKey;
+  }
+
+  /** How many pending suggestions are stale under `engineKey`:
+   * all of them when a known, different engine produced them;
+   * zero when the engine is unchanged, the inbox is empty, or the
+   * producing engine is unknown (fresh install — nothing to
+   * attribute, and the pass rebuilds the inbox anyway). */
+  staleCount(engineKey: string, pendingCount: number): number {
+    if (this.producedBy === null || this.producedBy === engineKey) {
+      return 0;
+    }
+    return pendingCount;
+  }
+
+  noteProduced(engineKey: string): void {
+    this.producedBy = engineKey;
+  }
 }
 
 // -------------------------------------------------------------------
@@ -289,7 +426,65 @@ function judgeRequestFor(
       groupKey: groupKeyOf(g.record),
       name: g.record.name,
     })),
+    splitEvaluation: needsSplitEvaluation(draft),
   };
+}
+
+/** Cluster drafts larger than this are presumptively over-merged
+ * when they come from one multi-doc platform (Phase 3). */
+export const SPLIT_EVAL_SIZE = 8;
+
+/** Mean pairwise title containment over cleaned titles (the
+ * scorer's overlap measure without its host/fuzzy terms). */
+function meanTitleContainment(tabs: readonly ScorerTabInput[]): number {
+  const sets = tabs.map((t) => tokenize(cleanTitle(t.title)));
+  let sum = 0;
+  let pairs = 0;
+  for (let i = 0; i < sets.length; i++) {
+    for (let j = i + 1; j < sets.length; j++) {
+      const a = sets[i];
+      const b = sets[j];
+      let inter = 0;
+      for (const tok of a) if (b.has(tok)) inter++;
+      const denom = Math.min(a.size, b.size);
+      sum += denom === 0 ? 0 : inter / denom;
+      pairs++;
+    }
+  }
+  return pairs === 0 ? 1 : sum / pairs;
+}
+
+/**
+ * Forced split evaluation (Phase 3): a cluster draft is routed to
+ * the judge as a partition request — not accept/reject — when ANY
+ * of these holds:
+ *  - it has more than SPLIT_EVAL_SIZE tabs;
+ *  - all members share one multi-doc platform host and their
+ *    title cohesion (mean pairwise cleaned-title containment) is
+ *    below the scorer's pair threshold;
+ *  - its proposed name is a single token that appears in fewer
+ *    than 60% of member titles — the majority-theme naming smell
+ *    (a cluster named for a theme many members do not share).
+ */
+export function needsSplitEvaluation(draft: SuggestionDraft): boolean {
+  if (draft.kind !== 'new-group') return false;
+  const tabs = draft.tabs;
+  if (tabs.length > SPLIT_EVAL_SIZE) return true;
+  if (draft.proposedName) {
+    const nameTokens = tokenize(draft.proposedName);
+    if (nameTokens.size === 1 && tabs.length > 0) {
+      const [token] = [...nameTokens];
+      const hits = tabs.filter((t) =>
+        tokenize(cleanTitle(t.title)).has(token),
+      ).length;
+      if (hits / tabs.length < 0.6) return true;
+    }
+  }
+  const shared = sharedHostOf(tabs);
+  if (shared !== null && isMultiDocHost(shared) && tabs.length >= 2) {
+    if (meanTitleContainment(tabs) < CLUSTER_THRESHOLD) return true;
+  }
+  return false;
 }
 
 /**
@@ -348,6 +543,28 @@ export async function applyNanoJudgments(
     if (draft.kind === 'add-to-group') {
       // new-topic / new-group for a single tab: a group of one is
       // not a suggestion — the tab stays unfiled.
+      continue;
+    }
+    if (verdict.action === 'split' && verdict.groups) {
+      // Partition (Phase 3): each sub-group becomes its own
+      // suggestion under the judge's topic name; tabs the judge
+      // listed as ungrouped get no suggestion this pass.
+      for (const g of verdict.groups) {
+        const members = g.tabs
+          .map((idx) => draft.tabs[idx - 1])
+          .filter((t): t is ScorerTabInput => t !== undefined);
+        if (members.length < 2) continue;
+        out.push({
+          ...draft,
+          tabIds: members.map((m) => m.id),
+          tabs: members,
+          proposedName: g.name,
+          confidence: Math.min(0.95, draft.confidence + 0.1),
+          source: 'nano',
+          nanoFallback: false,
+          fromPartition: true,
+        });
+      }
       continue;
     }
     // Cluster drafts: new-group (judge's name wins) or new-topic

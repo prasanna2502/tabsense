@@ -84,6 +84,17 @@
       <p class="managed-note" id="managed-autoclose" hidden>
         Managed by your organization
       </p>
+      <label class="toggle">
+        <input type="checkbox" id="opt-keep-intentional" />
+        Keep tabs I duplicate on purpose
+      </label>
+      <p class="note">
+        When you use the browser's Duplicate command on the tab you
+        are viewing, TabSense keeps the copy instead of closing it.
+      </p>
+      <p class="managed-note" id="managed-keep-intentional" hidden>
+        Managed by your organization
+      </p>
 
       <h3 class="settings-heading">Grouping</h3>
       <label class="toggle">
@@ -104,6 +115,17 @@
         Managed by your organization
       </p>
       <p id="ai-status" class="note"></p>
+      <!-- Prominent only while the on-device model is missing or
+           downloading: degraded grouping quality is never silent. -->
+      <div id="ai-model-callout" class="callout" hidden>
+        <p id="ai-model-callout-headline" class="callout-headline"></p>
+        <p id="ai-model-callout-body" class="note"></p>
+        <button id="ai-model-download" type="button" class="primary">
+          Download the on-device model
+        </button>
+        <progress id="ai-model-progress" max="1" hidden></progress>
+        <p id="ai-model-progress-text" class="note" hidden></p>
+      </div>
       <p id="grouping-status-settings" class="note"></p>
 
       <h3 class="settings-heading">Never group these sites</h3>

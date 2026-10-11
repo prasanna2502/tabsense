@@ -49,9 +49,11 @@ export interface ActivityEntry {
   reason:
     | 'auto-close'
     | 'bulk-close'
+    | 'kept-intentional'
     | 'group-accept'
     | 'group-dismiss'
-    | 'group-undo';
+    | 'group-undo'
+    | 'group-discard';
 }
 
 /** One grouping activity entry in the dedicated grouping log (M2):
@@ -168,6 +170,10 @@ export interface Suggestion {
   confidence: number;
   source: SuggestionSource;
   nanoFallback: boolean;
+  /** Phase 3 marker: this suggestion is one sub-group of a Nano
+   * judge partition (`split` verdict), not an accepted heuristic
+   * cluster. Source stays 'nano'. */
+  fromPartition?: boolean;
   createdAt: number;
 }
 
@@ -194,11 +200,13 @@ export interface SettingsView {
   provider: ProviderChoice;
   /** The blocklist in force (defaults resolved). */
   blocklist: string[];
+  keepIntentionalDuplicates: boolean;
   sources: {
     autoCloseEnabled: SettingSource;
     groupingPaused: SettingSource;
     provider: SettingSource;
     blocklist: SettingSource;
+    keepIntentionalDuplicates: SettingSource;
   };
   managedKeys: string[];
 }
@@ -210,6 +218,9 @@ export const SETTINGS_KEY = 'autoCloseEnabled';
 
 /** M2 grouping state keys (chrome.storage.local). */
 export const SUGGESTIONS_KEY = 'suggestions';
+/** Phase 3: which grouping engine produced the persisted pending
+ * suggestions (see SuggestionEngineGuard). */
+export const SUGGESTIONS_ENGINE_KEY = 'suggestionsEngine';
 export const GROUPS_KEY = 'tabSenseGroups';
 export const DISMISSED_KEY = 'dismissedSuggestions';
 export const GROUP_ACTIVITY_KEY = 'groupActivity';
@@ -260,9 +271,19 @@ export const SET_AUTO_CLOSE_MESSAGE = 'settings:set-auto-close';
 export const ACCEPT_SUGGESTION_MESSAGE = 'suggestions:accept';
 export const DISMISS_SUGGESTION_MESSAGE = 'suggestions:dismiss';
 export const UNDO_GROUP_ACTION_MESSAGE = 'suggestions:undo';
+export const SET_KEEP_INTENTIONAL_DUPLICATES_MESSAGE =
+  'settings:set-keep-intentional-duplicates';
 export const SET_GROUPING_PAUSED_MESSAGE = 'settings:set-grouping-paused';
 export const SET_PROVIDER_MESSAGE = 'settings:set-provider';
 export const SET_BLOCKLIST_MESSAGE = 'settings:set-blocklist';
+/** Panel → worker: start the on-device model download (the click is
+ * the user activation the Prompt API requires). The worker answers
+ * {started} when the create resolves; progress rides the broadcast
+ * below while the download runs. */
+export const DOWNLOAD_MODEL_MESSAGE = 'settings:download-model';
+/** Worker → panel broadcast: model download progress ({loaded} is a
+ * 0..1 fraction or null when the browser reports none). */
+export const NANO_DOWNLOAD_PROGRESS_MESSAGE = 'nano:download-progress';
 
 /**
  * Whether a tab is outside the dedupe engine's scope: pinned tabs are

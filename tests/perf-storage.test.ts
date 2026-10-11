@@ -350,11 +350,13 @@ function buildStorageObject(
       groupingPaused: false,
       provider: 'nano',
       blocklist: [...DEFAULT_BLOCKLIST],
+      keepIntentionalDuplicates: true,
       sources: {
         autoCloseEnabled: 'local',
         groupingPaused: 'local',
         provider: 'local',
         blocklist: 'local',
+        keepIntentionalDuplicates: 'local',
       },
       managedKeys: [],
     },

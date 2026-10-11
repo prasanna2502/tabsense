@@ -22,6 +22,23 @@
 //! everything containing that word. Longer titles sharing a single
 //! topic word keep the plain containment — that is the normal
 //! cross-site case (three pages about "sourdough").
+//!
+//! Two guardrails keep platform chrome from masquerading as topic
+//! (the "every Google Doc in one bucket" failure):
+//!
+//!  - Titles are cleaned before tokenization: platform suffixes
+//!    ("- Google Docs", " – Figma", " | Notion", …) are stripped, so
+//!    suffix tokens contribute nothing. A title that is only the
+//!    platform name cleans to "".
+//!  - Multi-document platforms (one host, thousands of unrelated
+//!    documents: Google Docs/Drive, Notion, Figma) get no host term
+//!    at all. For a pair on the same such host, the content terms
+//!    (title + path) are renormalized to the full scale, so the pair
+//!    can reach the thresholds only through genuine title-token
+//!    overlap, and the title containment there is undamped: on these
+//!    platforms titles are user-chosen document names, so a shared
+//!    token is real evidence — the damping exists to protect
+//!    cross-web one-word page titles, a different risk.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -78,6 +95,73 @@ struct Features {
     fuzzy_key: Option<String>,
 }
 
+/// Hosts where one host serves many unrelated documents, so a
+/// shared host carries no topic signal (mirrors the canonicalizer's
+/// platform handling: Google Workspace/Drive, Notion, Figma).
+const MULTI_DOC_HOSTS: &[&str] = &["docs.google.com", "drive.google.com", "figma.com"];
+
+/// Whether the host is a multi-document platform host.
+pub fn is_multi_doc_host(host: &str) -> bool {
+    MULTI_DOC_HOSTS.contains(&host)
+        || host == "notion.so"
+        || host.ends_with(".notion.so")
+        || host == "notion.site"
+        || host.ends_with(".notion.site")
+}
+
+/// Platform names whose trailing title suffix is platform chrome,
+/// not content ("Q4 Budget - Google Sheets" is about a budget).
+const PLATFORM_NAMES: &[&str] = &[
+    "google docs",
+    "google sheets",
+    "google slides",
+    "google drive",
+    "google forms",
+    "google drawings",
+    "notion",
+    "figma",
+];
+
+/// Separators platforms put between the document name and their
+/// brand in tab titles.
+const TITLE_SEPARATORS: &[&str] = &[" - ", " \u{2013} ", " \u{2014} ", " | "];
+
+/// Strip platform title suffixes (repeatedly — titles occasionally
+/// stack them). Returns the lowercased, trimmed remainder; the
+/// tokenizer lowercases anyway, so case folding here loses nothing.
+/// A title that is only the platform name cleans to "".
+pub fn clean_title(title: &str) -> String {
+    let mut s = title.to_lowercase();
+    loop {
+        let trimmed = s.trim_end();
+        let mut cut: Option<usize> = None;
+        for name in PLATFORM_NAMES {
+            if trimmed == *name {
+                cut = Some(0);
+                break;
+            }
+            for sep in TITLE_SEPARATORS {
+                let suffix = format!("{sep}{name}");
+                if trimmed.ends_with(&suffix) {
+                    cut = Some(trimmed.len() - suffix.len());
+                    break;
+                }
+            }
+            if cut.is_some() {
+                break;
+            }
+        }
+        match cut {
+            Some(n) => s = trimmed[..n].to_string(),
+            None => {
+                s = trimmed.to_string();
+                break;
+            }
+        }
+    }
+    s.trim().to_string()
+}
+
 fn tokenize(text: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     let mut cur = String::new();
@@ -121,10 +205,19 @@ fn features(tab: &TabInput) -> Features {
     Features {
         id: tab.id,
         host,
-        title_tokens: tokenize(&tab.title),
+        title_tokens: tokenize(&clean_title(&tab.title)),
         path_tokens,
         fuzzy_key: tab.fuzzy_key.clone(),
     }
+}
+
+/// Title containment |A∩B| / min(|A|, |B|); 0 when either is empty.
+fn title_containment(a: &BTreeSet<String>, b: &BTreeSet<String>) -> f64 {
+    let min = a.len().min(b.len());
+    if min == 0 {
+        return 0.0;
+    }
+    a.intersection(b).count() as f64 / min as f64
 }
 
 fn title_score(a: &BTreeSet<String>, b: &BTreeSet<String>) -> f64 {
@@ -151,12 +244,25 @@ fn overlap_coeff(a: &BTreeSet<String>, b: &BTreeSet<String>) -> f64 {
 
 /// Pairwise affinity between two tabs (see module weights).
 pub fn pair_score(a: &Features, b: &Features) -> f64 {
-    let mut score = 0.0;
-    if !a.host.is_empty() && a.host == b.host {
-        score += 0.25;
+    let same_host = !a.host.is_empty() && a.host == b.host;
+    let mut score;
+    if same_host && is_multi_doc_host(&a.host) {
+        // Multi-document platform: the shared host says nothing
+        // about topic, so the host term is withheld and the content
+        // terms are renormalized to the full scale — the pair can
+        // only score on genuine title/path overlap (undamped: titles
+        // here are document names; see the module doc).
+        let content = 0.60 * title_containment(&a.title_tokens, &b.title_tokens)
+            + 0.10 * overlap_coeff(&a.path_tokens, &b.path_tokens);
+        score = content / 0.70;
+    } else {
+        score = 0.0;
+        if same_host {
+            score += 0.25;
+        }
+        score += 0.60 * title_score(&a.title_tokens, &b.title_tokens);
+        score += 0.10 * overlap_coeff(&a.path_tokens, &b.path_tokens);
     }
-    score += 0.60 * title_score(&a.title_tokens, &b.title_tokens);
-    score += 0.10 * overlap_coeff(&a.path_tokens, &b.path_tokens);
     if let (Some(x), Some(y)) = (&a.fuzzy_key, &b.fuzzy_key) {
         if !x.is_empty() && x == y {
             score += 0.25;
@@ -439,6 +545,90 @@ mod tests {
         b.fuzzy_key = Some("doc:abc".to_string());
         let score = pair_score(&features(&a), &features(&b));
         assert!(score > 0.8, "score was {score}");
+    }
+
+    #[test]
+    fn clean_title_strips_platform_suffixes() {
+        assert_eq!(clean_title("Q4 Budget - Google Sheets"), "q4 budget");
+        assert_eq!(
+            clean_title("Costa Rica Flights \u{2014} Options - Google Docs"),
+            "costa rica flights \u{2014} options"
+        );
+        assert_eq!(clean_title("Roadmap \u{2013} Figma"), "roadmap");
+        assert_eq!(clean_title("Trip Notes | Notion"), "trip notes");
+        assert_eq!(clean_title("Google Docs"), "");
+        assert_eq!(clean_title("Notion"), "");
+        // A platform name inside the title is content, not a suffix.
+        assert_eq!(clean_title("My Notion Notes"), "my notion notes");
+        assert_eq!(clean_title("Figma Tips for Beginners"), "figma tips for beginners");
+        // No suffix: just case folding + trim.
+        assert_eq!(clean_title("  Sourdough Starter  "), "sourdough starter");
+    }
+
+    #[test]
+    fn multi_doc_host_detection() {
+        assert!(is_multi_doc_host("docs.google.com"));
+        assert!(is_multi_doc_host("drive.google.com"));
+        assert!(is_multi_doc_host("figma.com"));
+        assert!(is_multi_doc_host("notion.so"));
+        assert!(is_multi_doc_host("acme.notion.so"));
+        assert!(is_multi_doc_host("acme.notion.site"));
+        assert!(!is_multi_doc_host("example.com"));
+        assert!(!is_multi_doc_host("mail.google.com"));
+        assert!(!is_multi_doc_host("notion.so.evil.com"));
+    }
+
+    fn google_doc(id: i64, title: &str, doc_id: &str) -> TabInput {
+        tab(
+            id,
+            title,
+            &format!("https://docs.google.com/document/d/{doc_id}/edit"),
+        )
+    }
+
+    #[test]
+    fn mixed_topic_google_docs_do_not_cluster() {
+        // The dogfood failure: unrelated documents that share only
+        // the platform must not form a bucket.
+        let tabs = vec![
+            google_doc(1, "Costa Rica Flights — Options - Google Docs", "aaa"),
+            google_doc(2, "Resume — Prasanna Jayakumar - Google Docs", "bbb"),
+            google_doc(3, "Grade 3 Math — Arrays Worksheet - Google Docs", "ccc"),
+            google_doc(4, "Sourdough Starter Recipe - Google Docs", "ddd"),
+        ];
+        assert!(cluster_tabs(&tabs).is_empty());
+        // Pairwise: no pair may even clear the cluster threshold.
+        let feats: Vec<Features> = tabs.iter().map(features).collect();
+        for i in 0..feats.len() {
+            for j in (i + 1)..feats.len() {
+                assert!(
+                    pair_score(&feats[i], &feats[j]) < CLUSTER_THRESHOLD,
+                    "pair {i},{j} scored too high"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn same_topic_docs_on_same_platform_still_cluster() {
+        let tabs = vec![
+            google_doc(1, "Costa Rica Flights — Options - Google Docs", "aaa"),
+            tab(
+                2,
+                "Costa Rica Hotels and Lodging - Google Docs",
+                "https://docs.google.com/document/d/bbb/edit",
+            ),
+            tab(
+                3,
+                "Costa Rica Itinerary - Google Sheets",
+                "https://docs.google.com/spreadsheets/d/ccc/edit#gid=0",
+            ),
+            google_doc(4, "Resume — Prasanna Jayakumar - Google Docs", "ddd"),
+        ];
+        let clusters = cluster_tabs(&tabs);
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].tab_ids, vec![1, 2, 3]);
+        assert_eq!(clusters[0].name_seed, "costa");
     }
 
     #[test]

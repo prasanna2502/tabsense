@@ -5,6 +5,7 @@ import {
   dismissalSignature,
   groupKeyOf,
   groupLocalId,
+  isPlatformGroupName,
   localIdFromGroupKey,
   signatureFromKeys,
   type TabSenseGroupRecord,
@@ -95,5 +96,43 @@ describe('dismissals', () => {
     const capped = capDismissals(records);
     expect(capped).toHaveLength(200);
     expect(capped[0].signature).toBe('s249');
+  });
+});
+
+describe('isPlatformGroupName (Phase 3)', () => {
+  it('bans platform and brand names outright', () => {
+    for (const name of [
+      'Google',
+      'Google Docs',
+      'google sheets',
+      'Notion',
+      'Figma',
+      'Google Drive',
+    ]) {
+      expect(isPlatformGroupName(name)).toBe(true);
+    }
+  });
+
+  it('bans bare domain shapes', () => {
+    expect(isPlatformGroupName('docs.google.com')).toBe(true);
+    expect(isPlatformGroupName('notion.so')).toBe(true);
+    expect(isPlatformGroupName('example.com')).toBe(true);
+  });
+
+  it('bans the shared multi-doc host labels', () => {
+    expect(isPlatformGroupName('Docs', 'docs.google.com')).toBe(true);
+    expect(isPlatformGroupName('google.com', 'docs.google.com')).toBe(true);
+    expect(isPlatformGroupName('Google', 'docs.google.com')).toBe(true);
+    expect(isPlatformGroupName('Notion', 'www.notion.so')).toBe(true);
+  });
+
+  it('allows genuine topic names, incl. names that merely mention a platform', () => {
+    expect(isPlatformGroupName('Costa Rica')).toBe(false);
+    expect(isPlatformGroupName('Chicken')).toBe(false);
+    expect(isPlatformGroupName('Google I/O Talks')).toBe(false);
+    expect(isPlatformGroupName('Node.js')).toBe(false);
+    // A single-document site label is not a platform name.
+    expect(isPlatformGroupName('Example', 'example.com')).toBe(false);
+    expect(isPlatformGroupName('Docs', 'example.com')).toBe(false);
   });
 });

@@ -11,6 +11,14 @@
  * existing groups → top-K (≤5) candidates; cluster ungrouped tabs →
  * candidate new groups. Nothing here applies anything — the
  * suggestion engine and the Nano judge sit downstream.
+ *
+ * Two guardrails keep platform chrome from masquerading as topic
+ * (the "every Google Doc in one bucket" failure): platform title
+ * suffixes are stripped before tokenization, and multi-document
+ * platform hosts (Google Docs/Drive, Notion, Figma) earn no host
+ * term — pairs there score on renormalized content alone, with
+ * undamped title containment. See scorer.rs for the rationale; the
+ * implementations are kept in exact parity.
  */
 
 export interface ScorerTabInput {
@@ -60,6 +68,82 @@ const STOPWORDS = new Set([
   'the', 'this', 'to', 'was', 'we', 'were', 'what', 'when', 'where',
   'why', 'with', 'www', 'you', 'your',
 ]);
+
+/** Hosts where one host serves many unrelated documents, so a
+ * shared host carries no topic signal (mirrors the canonicalizer's
+ * platform handling: Google Workspace/Drive, Notion, Figma). */
+const MULTI_DOC_HOSTS = new Set([
+  'docs.google.com',
+  'drive.google.com',
+  'figma.com',
+]);
+
+/** Whether the host is a multi-document platform host. */
+export function isMultiDocHost(host: string): boolean {
+  return (
+    MULTI_DOC_HOSTS.has(host) ||
+    host === 'notion.so' ||
+    host.endsWith('.notion.so') ||
+    host === 'notion.site' ||
+    host.endsWith('.notion.site')
+  );
+}
+
+/** Platform names whose trailing title suffix is platform chrome,
+ * not content ("Q4 Budget - Google Sheets" is about a budget). */
+const PLATFORM_NAMES = [
+  'google docs',
+  'google sheets',
+  'google slides',
+  'google drive',
+  'google forms',
+  'google drawings',
+  'notion',
+  'figma',
+];
+
+/** Separators platforms put between the document name and their
+ * brand in tab titles. */
+const TITLE_SEPARATORS = [' - ', ' – ', ' — ', ' | '];
+
+/** Platform names for group-name validation (groups.ts): the
+ * suffix names plus the bare brand. */
+export const PLATFORM_GROUP_NAMES: ReadonlySet<string> = new Set([
+  ...PLATFORM_NAMES,
+  'google',
+]);
+
+/** Strip platform title suffixes (repeatedly — titles occasionally
+ * stack them). Returns the lowercased, trimmed remainder; the
+ * tokenizer lowercases anyway, so case folding here loses nothing.
+ * A title that is only the platform name cleans to "". */
+export function cleanTitle(title: string): string {
+  let s = title.toLowerCase();
+  for (;;) {
+    const trimmed = s.replace(/\s+$/, '');
+    let cut: number | null = null;
+    for (const name of PLATFORM_NAMES) {
+      if (trimmed === name) {
+        cut = 0;
+        break;
+      }
+      for (const sep of TITLE_SEPARATORS) {
+        const suffix = sep + name;
+        if (trimmed.endsWith(suffix)) {
+          cut = trimmed.length - suffix.length;
+          break;
+        }
+      }
+      if (cut !== null) break;
+    }
+    if (cut === null) {
+      s = trimmed;
+      break;
+    }
+    s = trimmed.slice(0, cut);
+  }
+  return s.trim();
+}
 
 export function tokenize(text: string): Set<string> {
   const out = new Set<string>();
@@ -111,15 +195,24 @@ function featuresOf(tab: ScorerTabInput): Features {
   return {
     id: tab.id,
     host,
-    titleTokens: tokenize(tab.title),
+    titleTokens: tokenize(cleanTitle(tab.title)),
     pathTokens,
     fuzzyKey: tab.fuzzyKey,
   };
 }
 
-/** Title containment |A∩B| / min(|A|,|B|), damped by half only when
- * the shorter title has ≤2 tokens and the titles share fewer than 2
- * (see scorer.rs for the rationale). */
+/** Title containment |A∩B| / min(|A|, |B|); 0 when either is empty. */
+function titleContainment(a: Set<string>, b: Set<string>): number {
+  const min = Math.min(a.size, b.size);
+  if (min === 0) return 0;
+  let inter = 0;
+  for (const tok of a) if (b.has(tok)) inter++;
+  return inter / min;
+}
+
+/** Title containment, damped by half only when the shorter title
+ * has ≤2 tokens and the titles share fewer than 2 (see scorer.rs
+ * for the rationale). */
 function titleScore(a: Set<string>, b: Set<string>): number {
   const min = Math.min(a.size, b.size);
   if (min === 0) return 0;
@@ -139,16 +232,27 @@ function overlapCoeff(a: Set<string>, b: Set<string>): number {
 
 /** Pairwise affinity between two tabs:
  * 0.25·same-host + 0.60·title containment + 0.10·path overlap
- * + 0.25·same-fuzzy-key, clamped to 1. */
+ * + 0.25·same-fuzzy-key, clamped to 1. Pairs on the same
+ * multi-document platform host skip the host term and renormalize
+ * the content terms (see scorer.rs). */
 export function pairScore(a: ScorerTabInput, b: ScorerTabInput): number {
   return pairScoreFeatures(featuresOf(a), featuresOf(b));
 }
 
 function pairScoreFeatures(a: Features, b: Features): number {
-  let score = 0;
-  if (a.host !== '' && a.host === b.host) score += 0.25;
-  score += 0.6 * titleScore(a.titleTokens, b.titleTokens);
-  score += 0.1 * overlapCoeff(a.pathTokens, b.pathTokens);
+  const sameHost = a.host !== '' && a.host === b.host;
+  let score: number;
+  if (sameHost && isMultiDocHost(a.host)) {
+    const content =
+      0.6 * titleContainment(a.titleTokens, b.titleTokens) +
+      0.1 * overlapCoeff(a.pathTokens, b.pathTokens);
+    score = content / 0.7;
+  } else {
+    score = 0;
+    if (sameHost) score += 0.25;
+    score += 0.6 * titleScore(a.titleTokens, b.titleTokens);
+    score += 0.1 * overlapCoeff(a.pathTokens, b.pathTokens);
+  }
   if (a.fuzzyKey && b.fuzzyKey && a.fuzzyKey === b.fuzzyKey) score += 0.25;
   return Math.min(1, score);
 }

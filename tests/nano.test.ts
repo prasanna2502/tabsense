@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildJudgePrompt,
+  downloadModel,
   judgeWithRetry,
+  nanoAvailabilityProblem,
   normalizeAvailability,
   validateVerdictText,
   type JudgeRequest,
   type LanguageModelLike,
+  type NanoDownloadMonitor,
   type NanoSession,
 } from '../src/lib/nano';
 
@@ -38,6 +41,33 @@ describe('validateVerdictText', () => {
     expect(validateVerdictText('{"action":"new-topic"}', REQ)).toEqual({
       action: 'new-topic',
     });
+  });
+
+  it('rejects new-group names that are just the platform/domain (Phase 3)', () => {
+    const docsReq: JudgeRequest = {
+      kind: 'cluster',
+      tabs: [
+        { title: 'Q4 Budget - Google Sheets', host: 'docs.google.com' },
+        { title: 'Roadmap - Google Docs', host: 'docs.google.com' },
+      ],
+      candidateGroups: [],
+    };
+    for (const name of ['Google', 'Google Docs', 'docs.google.com', 'Docs']) {
+      expect(
+        validateVerdictText(
+          `{"action":"new-group","name":"${name}"}`,
+          docsReq,
+        ),
+      ).toBeNull();
+    }
+    // A topic name for the same tabs is fine.
+    expect(
+      validateVerdictText('{"action":"new-group","name":"Q4 Planning"}', docsReq),
+    ).toEqual({ action: 'new-group', name: 'Q4 Planning' });
+    // The platform set applies even without a shared platform host.
+    expect(
+      validateVerdictText('{"action":"new-group","name":"Notion"}', REQ),
+    ).toBeNull();
   });
 
   it('rejects a group that was not offered', () => {
@@ -162,5 +192,226 @@ describe('judgeWithRetry', () => {
   it('the retry prompt is the simple template form', () => {
     expect(buildJudgePrompt(REQ, true)).toContain('Reply with JSON only');
     expect(buildJudgePrompt(REQ, false)).toContain('JSON object');
+  });
+
+  it('cluster prompts offer the split verdict and the naming rule', () => {
+    const clusterReq: JudgeRequest = {
+      kind: 'cluster',
+      tabs: [
+        { title: 'A - Google Docs', host: 'docs.google.com' },
+        { title: 'B - Google Docs', host: 'docs.google.com' },
+      ],
+      candidateGroups: [],
+    };
+    const full = buildJudgePrompt(clusterReq);
+    expect(full).toContain('"action":"split"');
+    expect(full).toContain('never the website or platform');
+    expect(full).toContain('presumptively wrong');
+    const simple = buildJudgePrompt(clusterReq, true);
+    expect(simple).toContain('"action":"split"');
+    expect(simple).toContain('never the website');
+  });
+
+  it('a split-evaluation prompt flags the likely over-merge', () => {
+    const flagged: JudgeRequest = {
+      kind: 'cluster',
+      tabs: [{ title: 'A', host: 'docs.google.com' }],
+      candidateGroups: [],
+      splitEvaluation: true,
+    };
+    expect(buildJudgePrompt(flagged)).toContain('likely over-merge');
+    const unflagged: JudgeRequest = { ...flagged, splitEvaluation: false };
+    expect(buildJudgePrompt(unflagged)).not.toContain('likely over-merge');
+  });
+});
+
+describe('validateVerdictText — split verdicts (Phase 3)', () => {
+  const CREQ: JudgeRequest = {
+    kind: 'cluster',
+    tabs: [1, 2, 3, 4, 5].map((i) => ({
+      title: `Tab ${i}`,
+      host: 'docs.google.com',
+    })),
+    candidateGroups: [],
+  };
+  const split = (groups: unknown, ungrouped: unknown) =>
+    JSON.stringify({ action: 'split', groups, ungrouped });
+
+  it('accepts a well-formed partition covering every tab exactly once', () => {
+    const v = validateVerdictText(
+      split(
+        [
+          { name: 'Topic A', tabs: [1, 2] },
+          { name: 'Topic B', tabs: [3, 4] },
+        ],
+        [5],
+      ),
+      CREQ,
+    );
+    expect(v).toEqual({
+      action: 'split',
+      groups: [
+        { name: 'Topic A', tabs: [1, 2] },
+        { name: 'Topic B', tabs: [3, 4] },
+      ],
+      ungrouped: [5],
+    });
+  });
+
+  it('rejects overlapping, out-of-range, and non-integer indices', () => {
+    expect(
+      validateVerdictText(
+        split([{ name: 'A', tabs: [1, 2] }, { name: 'B', tabs: [2, 3] }], [4, 5]),
+        CREQ,
+      ),
+    ).toBeNull();
+    expect(
+      validateVerdictText(
+        split([{ name: 'A', tabs: [1, 2] }, { name: 'B', tabs: [3, 9] }], [4, 5]),
+        CREQ,
+      ),
+    ).toBeNull();
+    expect(
+      validateVerdictText(
+        split([{ name: 'A', tabs: [1, 2.5] }, { name: 'B', tabs: [3, 4] }], [5]),
+        CREQ,
+      ),
+    ).toBeNull();
+  });
+
+  it('rejects singleton sub-groups, incomplete coverage, and a missing ungrouped list', () => {
+    expect(
+      validateVerdictText(
+        split([{ name: 'A', tabs: [1] }, { name: 'B', tabs: [2, 3] }], [4, 5]),
+        CREQ,
+      ),
+    ).toBeNull();
+    // Tab 5 silently dropped — not a partition.
+    expect(
+      validateVerdictText(
+        split([{ name: 'A', tabs: [1, 2] }, { name: 'B', tabs: [3, 4] }], []),
+        CREQ,
+      ),
+    ).toBeNull();
+    expect(
+      validateVerdictText(
+        JSON.stringify({
+          action: 'split',
+          groups: [{ name: 'A', tabs: [1, 2, 3, 4, 5] }],
+        }),
+        CREQ,
+      ),
+    ).toBeNull();
+  });
+
+  it('rejects platform names inside a partition and split on assign requests', () => {
+    expect(
+      validateVerdictText(
+        split([{ name: 'Google Docs', tabs: [1, 2] }, { name: 'B', tabs: [3, 4] }], [5]),
+        CREQ,
+      ),
+    ).toBeNull();
+    expect(
+      validateVerdictText(
+        split([{ name: 'A', tabs: [1] }], []),
+        REQ, // kind: 'assign', one tab
+      ),
+    ).toBeNull();
+  });
+
+  it('rejects split fields riding on a non-split action', () => {
+    expect(
+      validateVerdictText(
+        '{"action":"reject","groups":[{"name":"A","tabs":[1,2]}]}',
+        CREQ,
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('nanoAvailabilityProblem', () => {
+  it('maps the availability states to settings-surface problems', () => {
+    expect(nanoAvailabilityProblem('available')).toBeNull();
+    expect(nanoAvailabilityProblem('downloadable')).toBe('not-downloaded');
+    expect(nanoAvailabilityProblem('downloading')).toBe('downloading');
+    expect(nanoAvailabilityProblem('unavailable')).toBe('unavailable');
+  });
+});
+
+describe('downloadModel', () => {
+  it('creates a session with a monitor, forwards progress, destroys the session', async () => {
+    let monitorFn: ((m: NanoDownloadMonitor) => void) | undefined;
+    let destroyed = 0;
+    const lm: LanguageModelLike = {
+      availability: () => Promise.resolve('downloadable'),
+      create: (options) => {
+        monitorFn = options?.monitor;
+        const session: NanoSession = {
+          prompt: () => Promise.resolve(''),
+          destroy: () => {
+            destroyed++;
+          },
+        };
+        return Promise.resolve(session);
+      },
+    };
+    const progress: (number | null)[] = [];
+    const ok = await downloadModel(lm, (loaded) => progress.push(loaded));
+    expect(ok).toBe(true);
+    expect(destroyed).toBe(1);
+    // Drive the captured monitor the way Chrome would.
+    let listener: ((event: { loaded?: number }) => void) | undefined;
+    monitorFn?.({
+      addEventListener: (_type, l) => {
+        listener = l;
+      },
+    });
+    listener?.({ loaded: 0.25 });
+    listener?.({ loaded: 1 });
+    listener?.({});
+    expect(progress).toEqual([0.25, 1, null]);
+  });
+
+  it('returns false (never throws) when session creation fails', async () => {
+    const lm: LanguageModelLike = {
+      availability: () => Promise.resolve('downloadable'),
+      create: () => Promise.reject(new Error('no user activation')),
+    };
+    await expect(downloadModel(lm)).resolves.toBe(false);
+  });
+
+  it('walks the availability states: downloadable → downloading → available', async () => {
+    // The state machine the settings surface renders: each raw
+    // state normalizes, then maps to its problem (or none).
+    const states = ['downloadable', 'downloading', 'available'] as const;
+    expect(
+      states.map((s) => nanoAvailabilityProblem(normalizeAvailability(s))),
+    ).toEqual(['not-downloaded', 'downloading', null]);
+  });
+});
+
+describe('create() language options', () => {
+  it('every session create declares English input/output expectations (no Chrome console warning)', async () => {
+    const seen: unknown[] = [];
+    const session: NanoSession = {
+      prompt: () => Promise.resolve('{"action":"new-topic"}'),
+      destroy: () => undefined,
+    };
+    const lm: LanguageModelLike = {
+      availability: () => Promise.resolve('available'),
+      create: (options) => {
+        seen.push(options);
+        return Promise.resolve(session);
+      },
+    };
+    await judgeWithRetry(lm, REQ);
+    await downloadModel(lm);
+    expect(seen.length).toBeGreaterThanOrEqual(2);
+    for (const options of seen) {
+      expect(options).toMatchObject({
+        expectedInputs: [{ type: 'text', languages: ['en'] }],
+        expectedOutputs: [{ type: 'text', languages: ['en'] }],
+      });
+    }
   });
 });

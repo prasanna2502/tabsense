@@ -3,11 +3,13 @@ import { BRANDING } from '../src/config/branding';
 import { CircuitBreaker, type LadderRung } from '../src/lib/breaker';
 import { isBlocklisted } from '../src/lib/blocklist';
 import {
+  DuplicateExemptions,
   countExtraCopies,
   findExactDuplicateSets,
   findFuzzySets,
   planBulkClose,
   planSimilarClose,
+  shouldKeepIntentionalDuplicate,
   summarizeDuplicates,
   type KeyedTab,
 } from '../src/lib/duplicates';
@@ -25,6 +27,7 @@ import {
 } from '../src/lib/groups';
 import {
   detectLanguageModel,
+  downloadModel,
   judgeWithRetry,
   normalizeAvailability,
   type JudgeRequest,
@@ -49,17 +52,21 @@ import {
   CLOSE_SIMILAR_SET_MESSAGE,
   DISMISS_SUGGESTION_MESSAGE,
   DISMISSED_KEY,
+  DOWNLOAD_MODEL_MESSAGE,
   GET_SNAPSHOT_MESSAGE,
   GROUPS_KEY,
   GROUP_ACTIVITY_CAP,
   GROUP_ACTIVITY_KEY,
   LAST_ACTION_KEY,
+  NANO_DOWNLOAD_PROGRESS_MESSAGE,
   SETTINGS_KEY,
   SET_AUTO_CLOSE_MESSAGE,
   SET_BLOCKLIST_MESSAGE,
   SET_GROUPING_PAUSED_MESSAGE,
+  SET_KEEP_INTENTIONAL_DUPLICATES_MESSAGE,
   SET_PROVIDER_MESSAGE,
   SNAPSHOT_KEY,
+  SUGGESTIONS_ENGINE_KEY,
   SUGGESTIONS_KEY,
   SWAP_SAMPLES_CAP,
   SWAP_SAMPLES_KEY,
@@ -76,8 +83,10 @@ import {
   type TabSnapshot,
 } from '../src/lib/snapshot';
 import {
+  SuggestionEngineGuard,
   applyNanoJudgments,
   buildSuggestions,
+  groupingEngineKey,
   type EngineGroup,
   type EngineTab,
   type SuggestionDraft,
@@ -146,6 +155,11 @@ interface TrackedTab {
   /** Chrome group ID or -1 (M2 grouping bookkeeping). */
   groupId: number;
   pinned: boolean;
+  /** Last observed strip position and activation state — the
+   * creation-time evidence the intentional-duplicate fingerprint
+   * reads (kept fresh by tab events and snapshot refreshes). */
+  index: number;
+  active: boolean;
 }
 
 export default defineBackground(() => {
@@ -239,6 +253,13 @@ export default defineBackground(() => {
   } | null = null;
   let effective: EffectiveSettings | null = null;
   const breaker = new CircuitBreaker();
+  /** Phase 2: per-tab intentional-duplicate exemptions (in-memory;
+   * a worker restart ends them, and pre-existing tabs are outside
+   * the auto-close gate anyway). */
+  const duplicateExemptions = new DuplicateExemptions();
+  /** Phase 3: which grouping engine produced the pending
+   * suggestions (persisted alongside them). */
+  const engineGuard = new SuggestionEngineGuard();
   let lastEffectiveRung: LadderRung = 'heuristics';
   let nanoAvailability: NanoAvailability | 'unknown' = 'unknown';
   let nanoAvailabilityAt = 0;
@@ -288,6 +309,8 @@ export default defineBackground(() => {
       previous.windowId = tab.windowId;
       previous.groupId = tab.groupId ?? -1;
       previous.pinned = tab.pinned ?? false;
+      previous.index = tab.index ?? previous.index;
+      previous.active = tab.active ?? previous.active;
       previous.observed = previous.observed || observedNow;
       return previous;
     }
@@ -312,6 +335,8 @@ export default defineBackground(() => {
       excluded,
       groupId: tab.groupId ?? -1,
       pinned: tab.pinned ?? false,
+      index: tab.index ?? previous?.index ?? 0,
+      active: tab.active ?? previous?.active ?? false,
     };
     liveTabs.set(tab.id, tracked);
     indexAdd(tracked);
@@ -325,6 +350,7 @@ export default defineBackground(() => {
     const previous = liveTabs.get(tabId);
     if (previous) indexRemove(previous);
     liveTabs.delete(tabId);
+    duplicateExemptions.forget(tabId);
   }
 
   // ------------------------------------------------------------------
@@ -366,6 +392,7 @@ export default defineBackground(() => {
       [DISMISSED_KEY]: dismissals,
       [GROUP_ACTIVITY_KEY]: groupActivity,
       [SUGGESTIONS_KEY]: suggestions,
+      [SUGGESTIONS_ENGINE_KEY]: engineGuard.engineKey,
       [LAST_ACTION_KEY]: lastGroupAction,
     };
     groupStateWrite = groupStateWrite
@@ -536,6 +563,7 @@ export default defineBackground(() => {
     if (nanoAvailability !== 'unknown' && now - nanoAvailabilityAt < 60_000) {
       return nanoAvailability;
     }
+    const previous = nanoAvailability;
     const lm = detectLanguageModel();
     if (!lm) {
       nanoAvailability = 'unavailable';
@@ -548,6 +576,20 @@ export default defineBackground(() => {
       nanoAvailability = 'unavailable';
     }
     nanoAvailabilityAt = now;
+    // A model-state flip (e.g. the download finishing — including
+    // one triggered outside the extension) changes the effective
+    // grouping engine: schedule a pass so pending suggestions from
+    // the previous engine are invalidated and regenerated, instead
+    // of lingering until some unrelated tab event. Not while a
+    // pass is already running — that pass reads the new state
+    // itself.
+    if (
+      previous !== 'unknown' &&
+      nanoAvailability !== previous &&
+      !groupingPassRunning
+    ) {
+      scheduleGroupingPass();
+    }
     return nanoAvailability;
   }
 
@@ -587,10 +629,13 @@ export default defineBackground(() => {
       const settings = effective as EffectiveSettings;
       if (settings.groupingPaused) {
         lastEffectiveRung = 'paused';
+        engineGuard.noteProduced(
+          groupingEngineKey(settings.provider, 'paused'),
+        );
         if (suggestions.length > 0) {
           suggestions = [];
-          persistGroupState();
         }
+        persistGroupState();
         lastGroupingRunAt = Date.now();
         return;
       }
@@ -633,6 +678,32 @@ export default defineBackground(() => {
         }
       }
       lastEffectiveRung = rung;
+
+      // Engine-change invalidation (Phase 3): pending suggestions
+      // produced by a different engine — an earlier rung, the
+      // other provider, a tripped/recovered breaker, or a
+      // pre-tracking build — are stale. Discard them (logged)
+      // before this pass regenerates under the current engine.
+      // Acted-on suggestions are already out of the pending set;
+      // they are history and stay untouched.
+      const engineKey = groupingEngineKey(settings.provider, rung);
+      const staleCount = engineGuard.staleCount(
+        engineKey,
+        suggestions.length,
+      );
+      if (staleCount > 0) {
+        appendActivity({
+          id: `${now}-engine-discard`,
+          url: '',
+          title: `Discarded ${staleCount} suggestion${staleCount === 1 ? '' : 's'} from the previous grouping engine`,
+          closedTabId: -1,
+          keptTabId: -1,
+          closedAt: now,
+          reason: 'group-discard',
+        });
+        suggestions = [];
+      }
+      engineGuard.noteProduced(engineKey);
 
       let drafts = buildSuggestions({
         tabs: engineTabs,
@@ -939,11 +1010,39 @@ export default defineBackground(() => {
     return { undone };
   }
 
+  /**
+   * Panel-initiated on-device model download. The click in the
+   * panel is the user activation the Prompt API requires; creating
+   * a session starts the download, and its progress is broadcast
+   * to the panel while it runs. When the create resolves, the
+   * availability cache is invalidated and re-checked, so the
+   * snapshot's state line ("Grouping: on-device AI") and the next
+   * grouping pass pick the model up without waiting out the cache.
+   */
+  async function downloadNanoModel(): Promise<{ started: boolean }> {
+    const lm = detectLanguageModel();
+    if (!lm) return { started: false };
+    const started = await downloadModel(lm, (loaded) => {
+      void chrome.runtime
+        .sendMessage({ type: NANO_DOWNLOAD_PROGRESS_MESSAGE, loaded })
+        .catch(() => undefined);
+    });
+    nanoAvailabilityAt = 0; // force a fresh availability read
+    await currentNanoAvailability(Date.now());
+    scheduleRefreshSnapshot();
+    scheduleGroupingPass();
+    return { started };
+  }
+
   /** Read-modify-write of the local grouping settings object,
    * behind the managed-precedence rule: a field forced by policy
    * cannot be changed locally. */
   async function updateGroupingSetting(
-    field: 'groupingPaused' | 'provider' | 'blocklist',
+    field:
+      | 'groupingPaused'
+      | 'provider'
+      | 'blocklist'
+      | 'keepIntentionalDuplicates',
     value: unknown,
   ): Promise<{ applied: boolean; managed: boolean }> {
     if (!effective) await reloadEffectiveSettings();
@@ -968,6 +1067,52 @@ export default defineBackground(() => {
   // The dedupe decision
   // ------------------------------------------------------------------
 
+  /**
+   * Phase 2 fingerprint check, run once at creation from the
+   * onCreated event itself: a tab created exactly the way the
+   * browser's Duplicate command creates it — same canonical page,
+   * opened from that very tab, landing immediately to its right,
+   * while the source was the active tab — is a deliberate copy.
+   * It is exempted (per tab, per canonical URL), never auto-closed
+   * and never focus-stolen, and the keep is written to the
+   * activity log. Any weaker resemblance follows the normal rules.
+   */
+  function markIntentionalDuplicate(
+    tab: chrome.tabs.Tab,
+    tracked: TrackedTab,
+  ): void {
+    if (tab.id === undefined || tracked.exactKey === null) return;
+    const source =
+      tab.openerTabId !== undefined && tab.openerTabId !== null
+        ? liveTabs.get(tab.openerTabId)
+        : undefined;
+    const keep = shouldKeepIntentionalDuplicate(
+      {
+        newExactKey: tracked.exactKey,
+        sourceExactKey: source?.exactKey ?? null,
+        openerTabId: tab.openerTabId ?? null,
+        sourceTabId: source?.tabId ?? null,
+        newIndex: tab.index,
+        sourceIndex: source?.index ?? -1,
+        sameWindow: source !== undefined && tab.windowId === source.windowId,
+        sourceWasActive: source?.active ?? false,
+      },
+      effective?.keepIntentionalDuplicates ?? true,
+    );
+    if (!keep || !source) return;
+    duplicateExemptions.mark(tab.id, tracked.exactKey);
+    const now = Date.now();
+    appendActivity({
+      id: `${now}-${tab.id}-kept`,
+      url: tracked.url,
+      title: tracked.title,
+      closedTabId: tab.id,
+      keptTabId: source.tabId,
+      closedAt: now,
+      reason: 'kept-intentional',
+    });
+  }
+
   async function evaluateDuplicate(
     tabId: number,
     eventAt: number,
@@ -981,6 +1126,17 @@ export default defineBackground(() => {
     if (state === 'failed' || !autoCloseEnabled) return;
     const dup = liveTabs.get(tabId);
     if (!dup || dup.excluded || dup.exactKey === null || !dup.observed) return;
+    // Intentional-duplicate exemption: while the tab lives at the
+    // canonical URL it was deliberately duplicated at, it is never
+    // auto-closed. retain() ends the exemption when the tab has
+    // settled on a different key — normal rules then apply — and
+    // with the setting off, exemptions are dropped outright, so
+    // behavior is exactly the pre-exemption one.
+    if (effective?.keepIntentionalDuplicates ?? true) {
+      if (duplicateExemptions.retain(tabId, dup.exactKey)) return;
+    } else {
+      duplicateExemptions.forget(tabId);
+    }
     const set = exactIndex.get(dup.exactKey);
     if (!set || set.size < 2) return;
     // The existing tab is the earliest-seen other member of the set.
@@ -1229,11 +1385,13 @@ export default defineBackground(() => {
       groupingPaused: false,
       provider: 'nano',
       blocklist: [],
+      keepIntentionalDuplicates: true,
       sources: {
         autoCloseEnabled: 'local',
         groupingPaused: 'local',
         provider: 'local',
         blocklist: 'local',
+        keepIntentionalDuplicates: 'local',
       },
       managedKeys: [],
     },
@@ -1262,6 +1420,13 @@ export default defineBackground(() => {
   }
 
   async function refreshSnapshot(): Promise<void> {
+    // Proactive availability check: every snapshot refresh —
+    // worker start, panel open (the snapshot request handler), and
+    // event-driven refreshes — re-reads the model state (60 s
+    // cached inside currentNanoAvailability), so the panel never
+    // sits on "status not checked yet" while it is open. The read
+    // is a local API call off the tab-open path.
+    await currentNanoAvailability(Date.now());
     // M3 diagnostics: keep the storage-bytes figure fresh (throttled
     // to one read per 30 s; snapshot refreshes are event-driven and
     // off the tab-open path, and the read itself is async).
@@ -1281,6 +1446,13 @@ export default defineBackground(() => {
         .map((t) => {
           const url = t.url ?? t.pendingUrl ?? '';
           const tracked = liveTabs.get(t.id as number);
+          if (tracked) {
+            // Keep the fingerprint evidence fresh: strip position
+            // and activation drift (tabs closed/moved by hand fire
+            // no per-tab event for their neighbors).
+            tracked.index = t.index;
+            tracked.active = t.active;
+          }
           let exactKey: string | null = null;
           let fuzzyKey: string | null = null;
           if (!isExcludedTab(t) && url !== '') {
@@ -1343,6 +1515,8 @@ export default defineBackground(() => {
               groupingPaused: settings.groupingPaused,
               provider: settings.provider,
               blocklist: settings.blocklist,
+              keepIntentionalDuplicates:
+                settings.keepIntentionalDuplicates,
               sources: settings.sources,
               managedKeys: settings.managedKeys,
             }
@@ -1379,6 +1553,7 @@ export default defineBackground(() => {
         DISMISSED_KEY,
         GROUP_ACTIVITY_KEY,
         SUGGESTIONS_KEY,
+        SUGGESTIONS_ENGINE_KEY,
         LAST_ACTION_KEY,
       ]);
       if (Array.isArray(stored[ACTIVITY_KEY])) {
@@ -1403,6 +1578,15 @@ export default defineBackground(() => {
       }
       if (Array.isArray(stored[SUGGESTIONS_KEY])) {
         suggestions = stored[SUGGESTIONS_KEY] as Suggestion[];
+      }
+      if (typeof stored[SUGGESTIONS_ENGINE_KEY] === 'string') {
+        engineGuard.restore(stored[SUGGESTIONS_ENGINE_KEY]);
+      } else if (suggestions.length > 0) {
+        // Suggestions persisted before the engine identity was
+        // tracked: attribute them to an unknown older engine so
+        // the first pass under the current one discards and logs
+        // them rather than letting them linger.
+        engineGuard.restore('legacy-unknown');
       }
       if (
         typeof stored[LAST_ACTION_KEY] === 'object' &&
@@ -1470,11 +1654,32 @@ export default defineBackground(() => {
 
   chrome.tabs.onCreated.addListener((tab) => {
     const tracked = trackTab(tab, true);
-    if (tracked && tracked.exactKey !== null && tab.id !== undefined) {
-      void evaluateDuplicate(tab.id, Date.now(), false);
+    if (tracked && tab.id !== undefined) {
+      // Fingerprint first: the exemption must exist before the
+      // duplicate evaluation below reads it.
+      markIntentionalDuplicate(tab, tracked);
+      if (tracked.exactKey !== null) {
+        void evaluateDuplicate(tab.id, Date.now(), false);
+      }
     }
     scheduleRefreshSnapshot();
     scheduleGroupingPass();
+  });
+
+  // Activation and moves keep the tracked index/active evidence
+  // fresh for the intentional-duplicate fingerprint. Map writes
+  // only — nothing here touches the tab-open path's budget.
+  chrome.tabs.onActivated.addListener((activeInfo) => {
+    for (const t of liveTabs.values()) {
+      if (t.windowId === activeInfo.windowId) {
+        t.active = t.tabId === activeInfo.tabId;
+      }
+    }
+  });
+
+  chrome.tabs.onMoved.addListener((tabId, moveInfo) => {
+    const tracked = liveTabs.get(tabId);
+    if (tracked) tracked.index = moveInfo.toIndex;
   });
 
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -1603,6 +1808,13 @@ export default defineBackground(() => {
       void undoGroupAction().then(sendResponse);
       return true;
     }
+    if (message?.type === SET_KEEP_INTENTIONAL_DUPLICATES_MESSAGE) {
+      void updateGroupingSetting(
+        'keepIntentionalDuplicates',
+        message.enabled === true,
+      ).then(sendResponse);
+      return true;
+    }
     if (message?.type === SET_GROUPING_PAUSED_MESSAGE) {
       void updateGroupingSetting(
         'groupingPaused',
@@ -1615,6 +1827,10 @@ export default defineBackground(() => {
         'provider',
         message.provider === 'heuristics' ? 'heuristics' : 'nano',
       ).then(sendResponse);
+      return true;
+    }
+    if (message?.type === DOWNLOAD_MODEL_MESSAGE) {
+      void downloadNanoModel().then(sendResponse);
       return true;
     }
     if (message?.type === SET_BLOCKLIST_MESSAGE) {

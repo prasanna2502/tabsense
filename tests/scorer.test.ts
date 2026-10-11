@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   ADD_THRESHOLD,
+  CLUSTER_THRESHOLD,
   TOP_K,
+  cleanTitle,
   clusterTabs,
+  isMultiDocHost,
   pairScore,
   scoreCandidates,
   tokenize,
@@ -95,6 +98,76 @@ describe('scoreCandidates', () => {
         groups,
       ),
     ).toEqual([]);
+  });
+});
+
+describe('cleanTitle', () => {
+  it('strips platform suffixes, folds case, trims', () => {
+    expect(cleanTitle('Q4 Budget - Google Sheets')).toBe('q4 budget');
+    expect(cleanTitle('Costa Rica Flights — Options - Google Docs')).toBe(
+      'costa rica flights — options',
+    );
+    expect(cleanTitle('Roadmap – Figma')).toBe('roadmap');
+    expect(cleanTitle('Trip Notes | Notion')).toBe('trip notes');
+    expect(cleanTitle('Google Docs')).toBe('');
+    expect(cleanTitle('Notion')).toBe('');
+    // A platform name inside the title is content, not a suffix.
+    expect(cleanTitle('My Notion Notes')).toBe('my notion notes');
+    expect(cleanTitle('Figma Tips for Beginners')).toBe(
+      'figma tips for beginners',
+    );
+    expect(cleanTitle('  Sourdough Starter  ')).toBe('sourdough starter');
+  });
+});
+
+describe('isMultiDocHost', () => {
+  it('recognizes the multi-document platforms only', () => {
+    expect(isMultiDocHost('docs.google.com')).toBe(true);
+    expect(isMultiDocHost('drive.google.com')).toBe(true);
+    expect(isMultiDocHost('figma.com')).toBe(true);
+    expect(isMultiDocHost('notion.so')).toBe(true);
+    expect(isMultiDocHost('acme.notion.so')).toBe(true);
+    expect(isMultiDocHost('acme.notion.site')).toBe(true);
+    expect(isMultiDocHost('example.com')).toBe(false);
+    expect(isMultiDocHost('mail.google.com')).toBe(false);
+    expect(isMultiDocHost('notion.so.evil.com')).toBe(false);
+  });
+});
+
+describe('multi-document platform guardrails', () => {
+  const doc = (id: number, title: string, docId: string) =>
+    tab(id, title, `https://docs.google.com/document/d/${docId}/edit`);
+
+  it('never clusters mixed-topic Google Docs (the dogfood failure)', () => {
+    const tabs = [
+      doc(1, 'Costa Rica Flights — Options - Google Docs', 'aaa'),
+      doc(2, 'Resume — Prasanna Jayakumar - Google Docs', 'bbb'),
+      doc(3, 'Grade 3 Math — Arrays Worksheet - Google Docs', 'ccc'),
+      doc(4, 'Sourdough Starter Recipe - Google Docs', 'ddd'),
+    ];
+    expect(clusterTabs(tabs)).toEqual([]);
+    for (let i = 0; i < tabs.length; i++) {
+      for (let j = i + 1; j < tabs.length; j++) {
+        expect(pairScore(tabs[i], tabs[j])).toBeLessThan(CLUSTER_THRESHOLD);
+      }
+    }
+  });
+
+  it('still clusters same-topic docs on the same platform', () => {
+    const tabs = [
+      doc(1, 'Costa Rica Flights — Options - Google Docs', 'aaa'),
+      doc(2, 'Costa Rica Hotels and Lodging - Google Docs', 'bbb'),
+      tab(
+        3,
+        'Costa Rica Itinerary - Google Sheets',
+        'https://docs.google.com/spreadsheets/d/ccc/edit#gid=0',
+      ),
+      doc(4, 'Resume — Prasanna Jayakumar - Google Docs', 'ddd'),
+    ];
+    const clusters = clusterTabs(tabs);
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].tabIds).toEqual([1, 2, 3]);
+    expect(clusters[0].nameSeed).toBe('costa');
   });
 });
 

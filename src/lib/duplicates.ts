@@ -171,6 +171,99 @@ export function planSimilarClose(
   };
 }
 
+/** Creation evidence for the intentional-duplicate fingerprint
+ * (Phase 2), assembled by the worker from the tabs.onCreated event
+ * and its canonical index/tracking records — nothing else. */
+export interface IntentionalDuplicateEvidence {
+  /** Canonical key of the newly created tab (null = unkeyable). */
+  newExactKey: string | null;
+  /** Canonical key of the candidate source tab. */
+  sourceExactKey: string | null;
+  /** The new tab's openerTabId, as reported at creation. */
+  openerTabId: number | null | undefined;
+  /** The candidate source tab's id. */
+  sourceTabId: number | null;
+  /** The new tab's index at creation. */
+  newIndex: number;
+  /** The source tab's index at creation. */
+  sourceIndex: number;
+  /** Both tabs are in the same window. */
+  sameWindow: boolean;
+  /** The source tab was the active tab in its window at creation. */
+  sourceWasActive: boolean;
+}
+
+/**
+ * The intentional-duplicate fingerprint: ALL conditions required.
+ * It matches the browser's Duplicate command used on the tab being
+ * viewed — a copy of the same canonical page, opened from that tab
+ * itself, landing immediately to its right, while the source was
+ * the active tab. Anything weaker (a no-opener omnibox re-open, a
+ * copy of a background tab, a non-adjacent placement) is not
+ * evidence of intent and follows the normal duplicate rules.
+ */
+export function isIntentionalDuplicate(
+  e: IntentionalDuplicateEvidence,
+): boolean {
+  return (
+    e.newExactKey !== null &&
+    e.sourceExactKey !== null &&
+    e.newExactKey === e.sourceExactKey &&
+    e.openerTabId !== null &&
+    e.openerTabId !== undefined &&
+    e.sourceTabId !== null &&
+    e.openerTabId === e.sourceTabId &&
+    e.sameWindow &&
+    e.newIndex === e.sourceIndex + 1 &&
+    e.sourceWasActive
+  );
+}
+
+/** The full keep decision: the fingerprint AND the user's setting.
+ * Setting off restores the pre-exemption behavior exactly. */
+export function shouldKeepIntentionalDuplicate(
+  e: IntentionalDuplicateEvidence,
+  keepEnabled: boolean,
+): boolean {
+  return keepEnabled && isIntentionalDuplicate(e);
+}
+
+/**
+ * Per-tab exemption store. An exemption attaches to ONE tab id at
+ * ONE canonical key: it survives while the tab lives at that key
+ * (reloads and same-document navigations included) and ends the
+ * moment the tab settles on a different key or closes. It is never
+ * a per-URL exemption — another tab opening the same URL follows
+ * the normal rules.
+ */
+export class DuplicateExemptions {
+  private byTab = new Map<number, string>();
+
+  mark(tabId: number, exactKey: string): void {
+    this.byTab.set(tabId, exactKey);
+  }
+
+  /** True when the tab is currently exempt at this key. A tab
+   * marked at a different key has navigated away: its exemption
+   * ends here (and is dropped), so the caller proceeds with the
+   * normal rules for the new key. */
+  retain(tabId: number, exactKey: string | null): boolean {
+    const marked = this.byTab.get(tabId);
+    if (marked === undefined) return false;
+    if (exactKey !== null && marked === exactKey) return true;
+    this.byTab.delete(tabId);
+    return false;
+  }
+
+  forget(tabId: number): void {
+    this.byTab.delete(tabId);
+  }
+
+  has(tabId: number): boolean {
+    return this.byTab.has(tabId);
+  }
+}
+
 /** Groups of tabs sharing one fuzzyKey across 2+ distinct exactKeys:
  * the same document open in different views/states. Tabs that share
  * an exactKey land in an exact set instead; including them here when

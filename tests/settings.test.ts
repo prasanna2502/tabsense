@@ -104,4 +104,25 @@ describe('loadEffectiveSettings', () => {
     expect(eff.provider).toBe('nano');
     expect(eff.managedKeys).toEqual([]);
   });
+
+  it('keepIntentionalDuplicates defaults on, honors local off, and managed wins', async () => {
+    const def = await loadEffectiveSettings(EMPTY, null);
+    expect(def.keepIntentionalDuplicates).toBe(true);
+    expect(def.sources.keepIntentionalDuplicates).toBe('local');
+
+    const localOff = area({
+      [GROUPING_SETTINGS_KEY]: { keepIntentionalDuplicates: false },
+    });
+    const effLocal = await loadEffectiveSettings(localOff, null);
+    expect(effLocal.keepIntentionalDuplicates).toBe(false);
+    expect(effLocal.sources.keepIntentionalDuplicates).toBe('local');
+
+    const managedOn = area({
+      [GROUPING_SETTINGS_KEY]: { keepIntentionalDuplicates: true },
+    });
+    const effManaged = await loadEffectiveSettings(localOff, managedOn);
+    expect(effManaged.keepIntentionalDuplicates).toBe(true);
+    expect(effManaged.sources.keepIntentionalDuplicates).toBe('managed');
+    expect(effManaged.managedKeys).toContain('keepIntentionalDuplicates');
+  });
 });
