@@ -167,3 +167,39 @@ Full detail: `docs/progress/m3-throttled-pooled-p95-2026-10-11.md`.
   0.099 MB). **The exit clock has not started.** What to do
   about the throttled median row is a fresh decision; no
   further tuning was applied.
+
+---
+
+## Addendum — interleaved ABBA latency design (2026-10-11)
+
+PR #3's run left the throttled *median* red (21.61 ms) on a
+statistic that had read -5.54 ms in PR #2's run. A
+performance-engineering review put the flaw in the sequential
+block design itself (full baseline run, then full extension
+run, minutes apart — runner drift signs the delta), and the
+**interleaved ABBA design was approved on 2026-10-11** and
+pre-registered in perf-budgets.json. Full detail:
+`docs/progress/m3-latency-interleaved-design-2026-10-11.md`.
+
+- **DESIGN CHANGED, budgets unchanged.** Two live browsers
+  per profile alternate ABBA blocks of 5 opens; the median
+  (warm and throttled) gates on the median of paired block
+  differences; warm p95 keeps median-of-rounds; the throttled
+  p95 keeps the pooled percentile. Latency batches are
+  unique-only (duplicates keep the swap scenario).
+- **CI (PR #4, run 38168302003): NOT fully green.** The
+  paired design resolved the warm median to 1.177 ms (PASS,
+  all 30 paired differences within ±6.31 ms) and the pooled
+  throttled p95 passed again (-38.5 ms). But the **throttled
+  median (paired) gated at 37.485 ms vs <10 ms** — 14 of 20
+  differences positive, rounds 4–5 uniformly positive, and
+  the superseded median-of-rounds agrees (33.4 ms). With
+  drift cancelled by design, this row now reads as real
+  signal; per the stop rule no further tuning was applied,
+  and attribution is a fresh user decision. The swap
+  completion rows also failed (2 of 3 rounds: one original
+  tab never loaded in round 3; every landed swap took
+  10–15 ms and the timing gate passed). Ratified churn
+  passed (0.011 KB/cycle; 0.058 MB). **The exit clock has
+  not started.** PR #4 is left open for the user's merge
+  call.
