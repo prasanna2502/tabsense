@@ -193,6 +193,140 @@ describe('judgeWithRetry', () => {
     expect(buildJudgePrompt(REQ, true)).toContain('Reply with JSON only');
     expect(buildJudgePrompt(REQ, false)).toContain('JSON object');
   });
+
+  it('cluster prompts offer the split verdict and the naming rule', () => {
+    const clusterReq: JudgeRequest = {
+      kind: 'cluster',
+      tabs: [
+        { title: 'A - Google Docs', host: 'docs.google.com' },
+        { title: 'B - Google Docs', host: 'docs.google.com' },
+      ],
+      candidateGroups: [],
+    };
+    const full = buildJudgePrompt(clusterReq);
+    expect(full).toContain('"action":"split"');
+    expect(full).toContain('never the website or platform');
+    expect(full).toContain('presumptively wrong');
+    const simple = buildJudgePrompt(clusterReq, true);
+    expect(simple).toContain('"action":"split"');
+    expect(simple).toContain('never the website');
+  });
+
+  it('a split-evaluation prompt flags the likely over-merge', () => {
+    const flagged: JudgeRequest = {
+      kind: 'cluster',
+      tabs: [{ title: 'A', host: 'docs.google.com' }],
+      candidateGroups: [],
+      splitEvaluation: true,
+    };
+    expect(buildJudgePrompt(flagged)).toContain('likely over-merge');
+    const unflagged: JudgeRequest = { ...flagged, splitEvaluation: false };
+    expect(buildJudgePrompt(unflagged)).not.toContain('likely over-merge');
+  });
+});
+
+describe('validateVerdictText — split verdicts (Phase 3)', () => {
+  const CREQ: JudgeRequest = {
+    kind: 'cluster',
+    tabs: [1, 2, 3, 4, 5].map((i) => ({
+      title: `Tab ${i}`,
+      host: 'docs.google.com',
+    })),
+    candidateGroups: [],
+  };
+  const split = (groups: unknown, ungrouped: unknown) =>
+    JSON.stringify({ action: 'split', groups, ungrouped });
+
+  it('accepts a well-formed partition covering every tab exactly once', () => {
+    const v = validateVerdictText(
+      split(
+        [
+          { name: 'Topic A', tabs: [1, 2] },
+          { name: 'Topic B', tabs: [3, 4] },
+        ],
+        [5],
+      ),
+      CREQ,
+    );
+    expect(v).toEqual({
+      action: 'split',
+      groups: [
+        { name: 'Topic A', tabs: [1, 2] },
+        { name: 'Topic B', tabs: [3, 4] },
+      ],
+      ungrouped: [5],
+    });
+  });
+
+  it('rejects overlapping, out-of-range, and non-integer indices', () => {
+    expect(
+      validateVerdictText(
+        split([{ name: 'A', tabs: [1, 2] }, { name: 'B', tabs: [2, 3] }], [4, 5]),
+        CREQ,
+      ),
+    ).toBeNull();
+    expect(
+      validateVerdictText(
+        split([{ name: 'A', tabs: [1, 2] }, { name: 'B', tabs: [3, 9] }], [4, 5]),
+        CREQ,
+      ),
+    ).toBeNull();
+    expect(
+      validateVerdictText(
+        split([{ name: 'A', tabs: [1, 2.5] }, { name: 'B', tabs: [3, 4] }], [5]),
+        CREQ,
+      ),
+    ).toBeNull();
+  });
+
+  it('rejects singleton sub-groups, incomplete coverage, and a missing ungrouped list', () => {
+    expect(
+      validateVerdictText(
+        split([{ name: 'A', tabs: [1] }, { name: 'B', tabs: [2, 3] }], [4, 5]),
+        CREQ,
+      ),
+    ).toBeNull();
+    // Tab 5 silently dropped — not a partition.
+    expect(
+      validateVerdictText(
+        split([{ name: 'A', tabs: [1, 2] }, { name: 'B', tabs: [3, 4] }], []),
+        CREQ,
+      ),
+    ).toBeNull();
+    expect(
+      validateVerdictText(
+        JSON.stringify({
+          action: 'split',
+          groups: [{ name: 'A', tabs: [1, 2, 3, 4, 5] }],
+        }),
+        CREQ,
+      ),
+    ).toBeNull();
+  });
+
+  it('rejects platform names inside a partition and split on assign requests', () => {
+    expect(
+      validateVerdictText(
+        split([{ name: 'Google Docs', tabs: [1, 2] }, { name: 'B', tabs: [3, 4] }], [5]),
+        CREQ,
+      ),
+    ).toBeNull();
+    expect(
+      validateVerdictText(
+        split([{ name: 'A', tabs: [1] }], []),
+        REQ, // kind: 'assign', one tab
+      ),
+    ).toBeNull();
+  });
+
+  it('rejects split fields riding on a non-split action', () => {
+    expect(
+      validateVerdictText(
+        '{"action":"reject","groups":[{"name":"A","tabs":[1,2]}]}',
+        CREQ,
+      ),
+    ).toBeNull();
+  });
 });
 
 describe('nanoAvailabilityProblem', () => {

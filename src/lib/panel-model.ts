@@ -442,11 +442,12 @@ export function modelCallout(
 export function suggestionSourceLabel(
   source: 'nano' | 'heuristics' | 'domain-only',
   nanoFallback: boolean,
+  fromPartition = false,
 ): string {
   if (nanoFallback) return 'Local patterns';
   switch (source) {
     case 'nano':
-      return 'On-device AI';
+      return fromPartition ? 'On-device AI · split by topic' : 'On-device AI';
     case 'heuristics':
       return 'Local patterns';
     case 'domain-only':

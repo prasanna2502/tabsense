@@ -324,23 +324,43 @@
       },
       "clicksToOrganized": 1,
       "manualBaselineClicks": 4
+    },
+    {
+      "id": "kestrel-docs",
+      "tabs": 20,
+      "suggestions": 6,
+      "pairwise": {
+        "precision": 0.7857142857142857,
+        "recall": 1,
+        "f1": 0.88,
+        "tp": 11,
+        "fp": 3,
+        "fn": 0
+      },
+      "bcubed": {
+        "precision": 0.8833333333333334,
+        "recall": 1,
+        "f1": 0.9380530973451329
+      },
+      "clicksToOrganized": 7,
+      "manualBaselineClicks": 18
     }
   ],
   "aggregate": {
     "pairwise": {
-      "precision": 0.7727272727272727,
-      "recall": 0.3953488372093023,
-      "f1": 0.523076923076923,
-      "tp": 34,
-      "fp": 10,
+      "precision": 0.7758620689655172,
+      "recall": 0.4639175257731959,
+      "f1": 0.5806451612903226,
+      "tp": 45,
+      "fp": 13,
       "fn": 52
     },
     "bcubedItemWeighted": {
-      "precision": 0.9619047619047619,
-      "recall": 0.7647619047619048,
-      "f1": 0.8297039630375636
+      "precision": 0.9493333333333334,
+      "recall": 0.8024,
+      "f1": 0.8470398245267746
     },
-    "clicksToOrganized": 40,
-    "manualBaselineClicks": 73
+    "clicksToOrganized": 47,
+    "manualBaselineClicks": 91
   }
 }

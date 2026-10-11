@@ -87,3 +87,22 @@ it by project intent, which title tokens cannot recover; the
 Nano judge is the intended recovery path in production. Every
 other original session is unchanged, and precision is unchanged
 everywhere.
+
+## Phase 3 addition (judge partitions, 2026-10-11)
+
+The corpus gained `kestrel-docs`: 20 synthetic docs.google.com
+tabs (invented codenames only) across five latent topics — a
+project's RFCs and team syncs, two learning series, a ramp plan —
+plus decoy singletons (a different product's status doc, an
+onsite agenda that lexically shadows the learning series). On
+the heuristics rung it scores P 78.6% · R 100% · F1 88.0%:
+recall is perfect, but the onsite decoy chains into the learning
+group and two unrelated "renewal" docs pair up. That is exactly
+the failure the Nano judge's new `split` verdict exists to
+correct in production: over-merged candidates are routed to a
+partition evaluation, and a corpus test drives the full blob
+through verdict validation into per-topic suggestions with the
+decoys left ungrouped. The benchmark itself still measures the
+heuristics floor only. Corpus totals are now 17 sessions /
+125 tabs: **pairwise P 77.6% · R 46.4% · F1 58.1%; BCubed
+F1 84.7%; clicks-to-organized 47 vs 91**.

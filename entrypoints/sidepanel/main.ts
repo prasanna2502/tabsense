@@ -575,7 +575,7 @@ function suggestionCard(suggestion: Suggestion, snapshot: TabSnapshot): HTMLLIEl
       : `Add to “${suggestion.targetGroupName ?? 'group'}”`;
   const sub = document.createElement('p');
   sub.className = 'row-sub';
-  sub.textContent = `${suggestionSourceLabel(suggestion.source, suggestion.nanoFallback)} · ${pluralize(suggestion.tabIds.length, 'tab')}`;
+  sub.textContent = `${suggestionSourceLabel(suggestion.source, suggestion.nanoFallback, suggestion.fromPartition ?? false)} · ${pluralize(suggestion.tabIds.length, 'tab')}`;
   card.append(title, sub);
 
   // Member rows with include/exclude toggles.

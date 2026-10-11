@@ -170,6 +170,10 @@ export interface Suggestion {
   confidence: number;
   source: SuggestionSource;
   nanoFallback: boolean;
+  /** Phase 3 marker: this suggestion is one sub-group of a Nano
+   * judge partition (`split` verdict), not an accepted heuristic
+   * cluster. Source stays 'nano'. */
+  fromPartition?: boolean;
   createdAt: number;
 }
 
