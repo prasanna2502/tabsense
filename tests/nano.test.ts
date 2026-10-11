@@ -43,6 +43,33 @@ describe('validateVerdictText', () => {
     });
   });
 
+  it('rejects new-group names that are just the platform/domain (Phase 3)', () => {
+    const docsReq: JudgeRequest = {
+      kind: 'cluster',
+      tabs: [
+        { title: 'Q4 Budget - Google Sheets', host: 'docs.google.com' },
+        { title: 'Roadmap - Google Docs', host: 'docs.google.com' },
+      ],
+      candidateGroups: [],
+    };
+    for (const name of ['Google', 'Google Docs', 'docs.google.com', 'Docs']) {
+      expect(
+        validateVerdictText(
+          `{"action":"new-group","name":"${name}"}`,
+          docsReq,
+        ),
+      ).toBeNull();
+    }
+    // A topic name for the same tabs is fine.
+    expect(
+      validateVerdictText('{"action":"new-group","name":"Q4 Planning"}', docsReq),
+    ).toEqual({ action: 'new-group', name: 'Q4 Planning' });
+    // The platform set applies even without a shared platform host.
+    expect(
+      validateVerdictText('{"action":"new-group","name":"Notion"}', REQ),
+    ).toBeNull();
+  });
+
   it('rejects a group that was not offered', () => {
     expect(
       validateVerdictText('{"action":"add-to-group","groupKey":"ts:nope"}', REQ),

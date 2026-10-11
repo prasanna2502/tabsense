@@ -22,6 +22,8 @@
  * an offscreen document is not used in this milestone).
  */
 
+import { isPlatformGroupName } from './groups';
+
 export interface JudgeTabRef {
   title: string;
   host: string;
@@ -88,6 +90,13 @@ export function validateVerdictText(
     if (trimmed === '' || trimmed.length > MAX_GROUP_NAME_LENGTH) {
       return null;
     }
+    // A name that is just the platform/domain the tabs live on is
+    // invalid output (Phase 3) — it names the container, not the
+    // topic. Rejection routes through the usual invalid-output
+    // path (one simpler retry, then suggestion-only fallback).
+    const hosts = new Set(req.tabs.map((t) => t.host));
+    const sharedHost = hosts.size === 1 ? [...hosts][0] : null;
+    if (isPlatformGroupName(trimmed, sharedHost)) return null;
     return { action, name: trimmed };
   }
   if (action === 'add-to-group') {

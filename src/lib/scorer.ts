@@ -106,6 +106,13 @@ const PLATFORM_NAMES = [
  * brand in tab titles. */
 const TITLE_SEPARATORS = [' - ', ' – ', ' — ', ' | '];
 
+/** Platform names for group-name validation (groups.ts): the
+ * suffix names plus the bare brand. */
+export const PLATFORM_GROUP_NAMES: ReadonlySet<string> = new Set([
+  ...PLATFORM_NAMES,
+  'google',
+]);
+
 /** Strip platform title suffixes (repeatedly — titles occasionally
  * stack them). Returns the lowercased, trimmed remainder; the
  * tokenizer lowercases anyway, so case folding here loses nothing.

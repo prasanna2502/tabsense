@@ -24,12 +24,15 @@ import { isBlocklisted } from './blocklist';
 import {
   dismissalSignature,
   groupKeyOf,
+  isPlatformGroupName,
   type DismissalRecord,
   type TabSenseGroupRecord,
 } from './groups';
 import type { JudgeRequest, NanoVerdict } from './nano';
 import {
+  cleanTitle,
   hostOf,
+  tokenize,
   type Scorer,
   type ScorerGroupInput,
   type ScorerTabInput,
@@ -90,6 +93,59 @@ function hostTopicName(url: string): string {
   return titleCaseSeed(label);
 }
 
+/** The host every member shares, or null when they span hosts. */
+function sharedHostOf(tabs: readonly ScorerTabInput[]): string | null {
+  if (tabs.length === 0) return null;
+  const host = hostOf(tabs[0].url);
+  return tabs.every((t) => hostOf(t.url) === host) ? host : null;
+}
+
+/** The most frequent cleaned-title token across members that is
+ * not itself a platform name — the honest topic word to name a
+ * cluster after when the scorer's seed is unusable. The token must
+ * appear in at least two member titles. */
+function frequentTopicToken(
+  tabs: readonly ScorerTabInput[],
+  sharedHost: string | null,
+): string | null {
+  const counts = new Map<string, number>();
+  for (const t of tabs) {
+    for (const token of tokenize(cleanTitle(t.title))) {
+      counts.set(token, (counts.get(token) ?? 0) + 1);
+    }
+  }
+  let best: string | null = null;
+  let bestCount = 1; // must exceed one appearance
+  for (const [token, count] of [...counts].sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    if (count <= bestCount) continue;
+    if (isPlatformGroupName(token, sharedHost)) continue;
+    best = token;
+    bestCount = count;
+  }
+  return best;
+}
+
+/** Name for a heuristic cluster under the platform-name ban
+ * (Phase 3): the scorer's seed, else the members' most frequent
+ * topic token, else a host-derived name — each accepted only when
+ * it is not just a platform/domain name. Last resort is the
+ * neutral 'New group'. */
+function clusterGroupName(
+  members: readonly ScorerTabInput[],
+  nameSeed: string,
+): string {
+  const sharedHost = sharedHostOf(members);
+  const seed = titleCaseSeed(nameSeed);
+  if (seed !== '' && !isPlatformGroupName(seed, sharedHost)) return seed;
+  const token = frequentTopicToken(members, sharedHost);
+  if (token) return titleCaseSeed(token);
+  const hostName = hostTopicName(members[0].url);
+  if (!isPlatformGroupName(hostName, sharedHost)) return hostName;
+  return 'New group';
+}
+
 function isEligible(tab: EngineTab, blocklist: readonly string[]): boolean {
   if (tab.excluded || tab.pinned) return false;
   if (tab.groupId !== -1) return false; // in some group — hands off
@@ -144,6 +200,11 @@ function domainOnlyDrafts(
   }
   for (const [host, bucket] of byHost) {
     if (bucket.length < 2) continue;
+    const bucketName = titleCaseSeed(host.split('.')[0] ?? '') || 'New group';
+    // Platform buckets are the failure mode this rung must not
+    // reproduce: a "Docs"/"Notion" bucket is a domain name, not a
+    // topic (Phase 3) — those tabs get no bucket suggestion here.
+    if (isPlatformGroupName(bucketName, host)) continue;
     drafts.push({
       kind: 'new-group',
       windowId,
@@ -151,7 +212,7 @@ function domainOnlyDrafts(
       tabs: bucket,
       targetGroupKey: null,
       targetGroupName: null,
-      proposedName: titleCaseSeed(host.split('.')[0] ?? '') || 'New group',
+      proposedName: bucketName,
       confidence: 0.5,
       source: 'domain-only',
       nanoFallback: false,
@@ -187,10 +248,7 @@ function heuristicDrafts(
       tabs: members,
       targetGroupKey: null,
       targetGroupName: null,
-      proposedName:
-        titleCaseSeed(cluster.nameSeed) ||
-        hostTopicName(members[0].url) ||
-        'New group',
+      proposedName: clusterGroupName(members, cluster.nameSeed),
       confidence: cluster.cohesion,
       source: 'heuristics',
       nanoFallback: false,

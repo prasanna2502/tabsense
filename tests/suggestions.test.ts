@@ -171,6 +171,38 @@ describe('buildSuggestions — add to existing group', () => {
   });
 });
 
+describe('platform-name ban in heuristic naming (Phase 3)', () => {
+  it('domain-only rung: a docs.google.com bucket gets no platform-named draft', () => {
+    const tabs = [
+      recipeTab(1, 'Quarterly earnings call notes', 'https://docs.google.com/document/d/a1/edit'),
+      recipeTab(2, 'Totally unrelated opinion piece', 'https://docs.google.com/document/d/b2/edit'),
+    ];
+    expect(buildSuggestions(baseInput({ tabs, rung: 'domain-only' }))).toEqual([]);
+  });
+
+  it('heuristics rung: a same-platform cluster is named by topic, never by platform', () => {
+    const tabs = [
+      recipeTab(1, 'Costa Rica Itinerary - Google Docs', 'https://docs.google.com/document/d/a1/edit'),
+      recipeTab(2, 'Costa Rica Budget - Google Sheets', 'https://docs.google.com/spreadsheets/d/b2/edit'),
+      recipeTab(3, 'Costa Rica Packing List - Google Docs', 'https://docs.google.com/document/d/c3/edit'),
+    ];
+    const drafts = buildSuggestions(baseInput({ tabs }));
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].proposedName).toBe('Costa');
+  });
+
+  it('heuristics rung: when the seed would be a platform word, the next topic token names the group', () => {
+    const tabs = [
+      recipeTab(1, 'Google Cloud Console — Kestrel Project', 'https://console.cloud.google.com/kestrel'),
+      recipeTab(2, 'Google Cloud Billing — Kestrel Project', 'https://console.cloud.google.com/billing/kestrel'),
+    ];
+    const drafts = buildSuggestions(baseInput({ tabs }));
+    expect(drafts.length).toBeGreaterThan(0);
+    expect(drafts[0].proposedName).not.toBe('Google');
+    expect(['Cloud', 'Kestrel', 'Project']).toContain(drafts[0].proposedName);
+  });
+});
+
 describe('buildSuggestions — domain-only rung', () => {
   it('buckets by host with flat confidence', () => {
     const tabs = [
