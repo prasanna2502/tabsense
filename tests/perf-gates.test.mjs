@@ -9,7 +9,14 @@
 
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error — plain .mjs harness module, no type declarations
-import { churnChecks, compareBudget, medianOfRounds, pooledP95Delta } from '../scripts/perf/gates.mjs';
+import {
+  abbaQuartetDeltas,
+  churnChecks,
+  compareBudget,
+  medianOfRounds,
+  pairedBlockMedianDelta,
+  pooledP95Delta,
+} from '../scripts/perf/gates.mjs';
 // @ts-expect-error — plain .mjs harness module, no type declarations
 import { p95 } from '../scripts/perf/stats.mjs';
 // @ts-expect-error — plain .mjs harness module, no type declarations
@@ -159,6 +166,103 @@ describe('pooledP95Delta — throttled p95 statistic (M3 gate follow-up, 2026-10
     expect(r.onCount).toBe(2);
     expect(r.onP95).toBe(20);
     expect(r.delta).toBe(15);
+  });
+});
+
+describe('pairedBlockMedianDelta — interleaved ABBA statistic (M3 gate design change, 2026-10-11)', () => {
+  const blk = (condition, medianMs) => ({ condition, medianMs });
+  // One well-formed ABBA round: off medians 100/110 (mean 105),
+  // on medians 130/140 (mean 135) — a +30 ms paired delta.
+  const abbaRound = [blk('off', 100), blk('on', 130), blk('on', 140), blk('off', 110)];
+
+  it('pairs the inner on-blocks against the surrounding off-blocks of each quartet', () => {
+    const r = abbaQuartetDeltas(abbaRound);
+    expect(r.droppedBlocks).toBe(0);
+    expect(r.quartets).toEqual([{ on: 135, off: 105, delta: 30 }]);
+    expect(r.diffsMs).toEqual([30]);
+  });
+
+  it('a mirrored BAAB quartet still reports on minus off', () => {
+    const r = abbaQuartetDeltas([blk('on', 200), blk('off', 150), blk('off', 170), blk('on', 220)]);
+    // on mean = (200+220)/2 = 210; off mean = (150+170)/2 = 160.
+    expect(r.quartets).toEqual([{ on: 210, off: 160, delta: 50 }]);
+  });
+
+  it('cancels linear drift that defeats the sequential block design (crafted series)', () => {
+    // True effect: extension adds exactly +20 ms (off base 100, on
+    // base 120). The runner drifts linearly: +10 ms per block across
+    // the whole run (+70 ms end to end).
+    const interleaved = [
+      blk('off', 100), blk('on', 130), blk('on', 140), blk('off', 130),
+      blk('off', 140), blk('on', 170), blk('on', 180), blk('off', 170),
+    ];
+    // Quartet centroids coincide, so each paired delta is the true
+    // +20 despite the drift, and the gated median is exact.
+    expect(abbaQuartetDeltas(interleaved).diffsMs).toEqual([20, 20]);
+    expect(pairedBlockMedianDelta([interleaved]).delta).toBe(20);
+    // The same samples in the OLD sequential arrangement (all off
+    // blocks first, then all on blocks, drift +10/sample-position)
+    // reads +60: offs 100..130 (median 115), ons 160..190
+    // (median 175). The design, not the statistic, was the flaw.
+    const sequentialOff = [100, 110, 120, 130];
+    const sequentialOn = [160, 170, 180, 190];
+    expect(medianOfRounds(sequentialOn) - medianOfRounds(sequentialOff)).toBe(60);
+  });
+
+  it('gates on the median of the paired differences pooled across rounds', () => {
+    const slow = [blk('off', 100), blk('on', 190), blk('on', 200), blk('off', 110)]; // +90
+    const fast = [blk('off', 100), blk('on', 80), blk('on', 90), blk('off', 110)]; // -20
+    const r = pairedBlockMedianDelta([abbaRound, slow, fast]);
+    expect(r.pairCount).toBe(3);
+    expect(r.diffsMs).toEqual([30, 90, -20]);
+    expect(r.delta).toBe(30);
+  });
+
+  it('averages the two middle differences for an even pair count', () => {
+    const neg = [blk('off', 130), blk('on', 100), blk('on', 110), blk('off', 120)]; // -20
+    const r = pairedBlockMedianDelta([abbaRound, neg]);
+    expect(r.diffsMs).toEqual([30, -20]);
+    expect(r.delta).toBe(5);
+  });
+
+  it('delta is negative when the extension blocks are faster', () => {
+    const r = pairedBlockMedianDelta([[blk('off', 200), blk('on', 150), blk('on', 160), blk('off', 210)]]);
+    expect(r.delta).toBe(-50);
+  });
+
+  it('drops incomplete trailing blocks instead of pairing across the gap', () => {
+    const withTail = [...abbaRound, blk('off', 100), blk('on', 130)];
+    const r = abbaQuartetDeltas(withTail);
+    expect(r.quartets).toHaveLength(1);
+    expect(r.droppedBlocks).toBe(2);
+  });
+
+  it('drops quartets with a missing median or a non-ABBA pattern, and counts them', () => {
+    const missing = [blk('off', 100), blk('on', null), blk('on', 140), blk('off', 110)];
+    const wrongPattern = [blk('off', 100), blk('on', 130), blk('off', 105), blk('on', 135)];
+    const unknownCondition = [blk('off', 100), blk('warm', 130), blk('warm', 140), blk('off', 110)];
+    for (const bad of [missing, wrongPattern, unknownCondition]) {
+      const r = abbaQuartetDeltas(bad);
+      expect(r.quartets).toEqual([]);
+      expect(r.droppedBlocks).toBe(4);
+    }
+  });
+
+  it('quartets never span rounds', () => {
+    // Two half-quartets in different rounds must not combine.
+    const r = pairedBlockMedianDelta([
+      [blk('off', 100), blk('on', 130)],
+      [blk('on', 140), blk('off', 110)],
+    ]);
+    expect(r.pairCount).toBe(0);
+    expect(r.droppedBlocks).toBe(4);
+    expect(r.delta).toBeNull();
+  });
+
+  it('empty input yields a null delta (the gate then fails via compareBudget)', () => {
+    expect(pairedBlockMedianDelta([])).toEqual({ pairCount: 0, droppedBlocks: 0, diffsMs: [], delta: null });
+    expect(pairedBlockMedianDelta([[], []])).toMatchObject({ pairCount: 0, delta: null });
+    expect(compareBudget(entry('tab-open-added-latency-median'), pairedBlockMedianDelta([]).delta)).toBe(false);
   });
 });
 
