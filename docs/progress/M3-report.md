@@ -112,3 +112,29 @@ can start.
   (and a new permission) to save nothing measurable.
 - Cold-worker latency is reported informationally; the hard gate
   is warm + throttled, per the budgets file.
+
+---
+
+## Addendum — M3 gate ratification (2026-10-11)
+
+The two decisions flagged in this report were put to the user
+with the CI evidence and **both recommendations were adopted on
+2026-10-11**. Full detail: `docs/progress/m3-gate-ratification-2026-10-11.md`.
+
+- **Churn wording — RATIFIED.** The "~zero growth" budget quoted
+  in the table above (line "Churn, 5,000 cycles") is superseded.
+  perf-budgets.json v2 replaces the single `~` entry with two
+  explicit bounds: total growth over 5,000 cycles < 2 MB, and
+  leak slope <= 0.03 KB/cycle (2x the worst observed value:
+  0.010–0.011 KB/cycle CI, ~0.015 KB/cycle local; observed totals
+  ~60 KB CI / +93 KB local sit ~20x inside the total bound). The
+  historical figures quoted above stand as the calibration record.
+- **Throttled-p95 methodology — FIXED, budget unchanged.** The
+  <10 ms median / <25 ms p95 numbers are untouched. The harness
+  now runs 5 rounds of extension-on vs extension-off for the warm
+  and 4x-throttled profiles and gates on the median across
+  rounds (all rounds reported; no retries-until-pass). The swap
+  completion checks likewise repeat in 3 rounds of 5 iterations
+  with a per-round warm-up discard — the aggregation issue noted
+  above. The exit clock starts at the first fully green CI perf
+  run under this methodology.
