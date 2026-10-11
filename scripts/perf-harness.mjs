@@ -18,6 +18,8 @@
  *   PERF_CHURN_TOTAL / PERF_CHURN_WARMUP  local iteration aids for the
  *                     churn scenario (defaults are the spec values;
  *                     non-default runs report gates informationally)
+ *   PERF_LATENCY_ROUNDS  latency rounds override (ratified default 5;
+ *                     non-default counts are disclosed in the report)
  *
  * Output: stdout measured-vs-budget table + perf-report.json and
  * perf-report.md in <repo>/.perf-results/ (CI artifacts).
