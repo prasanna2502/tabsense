@@ -228,3 +228,29 @@ describe('downloadModel', () => {
     ).toEqual(['not-downloaded', 'downloading', null]);
   });
 });
+
+describe('create() language options', () => {
+  it('every session create declares English input/output expectations (no Chrome console warning)', async () => {
+    const seen: unknown[] = [];
+    const session: NanoSession = {
+      prompt: () => Promise.resolve('{"action":"new-topic"}'),
+      destroy: () => undefined,
+    };
+    const lm: LanguageModelLike = {
+      availability: () => Promise.resolve('available'),
+      create: (options) => {
+        seen.push(options);
+        return Promise.resolve(session);
+      },
+    };
+    await judgeWithRetry(lm, REQ);
+    await downloadModel(lm);
+    expect(seen.length).toBeGreaterThanOrEqual(2);
+    for (const options of seen) {
+      expect(options).toMatchObject({
+        expectedInputs: [{ type: 'text', languages: ['en'] }],
+        expectedOutputs: [{ type: 'text', languages: ['en'] }],
+      });
+    }
+  });
+});

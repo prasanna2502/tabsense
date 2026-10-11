@@ -165,11 +165,25 @@ export interface NanoDownloadMonitor {
   ): void;
 }
 
+/** Language expectations declared on every create() call: Chrome
+ * logs a console warning ("No output language was specified…")
+ * when they are omitted. TabSense prompts and parses in English,
+ * so every session this client creates declares English in/out. */
+export const NANO_LANGUAGE_OPTIONS: {
+  expectedInputs: { type: string; languages: string[] }[];
+  expectedOutputs: { type: string; languages: string[] }[];
+} = {
+  expectedInputs: [{ type: 'text', languages: ['en'] }],
+  expectedOutputs: [{ type: 'text', languages: ['en'] }],
+};
+
 export interface LanguageModelLike {
   availability(): Promise<unknown>;
   create(options?: {
     systemPrompt?: string;
     monitor?: (m: NanoDownloadMonitor) => void;
+    expectedInputs?: { type: string; languages: string[] }[];
+    expectedOutputs?: { type: string; languages: string[] }[];
   }): Promise<NanoSession>;
 }
 
@@ -268,6 +282,7 @@ export async function downloadModel(
   let session: NanoSession | null = null;
   try {
     session = await lm.create({
+      ...NANO_LANGUAGE_OPTIONS,
       monitor: (m) => {
         m.addEventListener('downloadprogress', (event) => {
           onProgress?.(
@@ -312,6 +327,7 @@ async function judgeAttempt(
   let session: NanoSession | null = null;
   try {
     session = await lm.create({
+      ...NANO_LANGUAGE_OPTIONS,
       systemPrompt:
         'You organize browser tabs into topic groups. You answer with one JSON object only.',
     });
