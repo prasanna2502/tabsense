@@ -12,6 +12,8 @@ import {
   formatMs,
   type DiagnosticsView,
 } from './diagnostics';
+import { nanoAvailabilityProblem, type NanoAvailability } from './nano';
+import type { ProviderChoice } from './settings';
 
 /** Host for display: "docs.google.com" — scheme, port, credentials,
  * and a leading "www." are dropped. Unparseable input is returned
@@ -345,6 +347,95 @@ export function diagnosticsLines(view: DiagnosticsView): string[] {
       `local data: ${formatBytes(view.storageBytes)}`,
   );
   return lines;
+}
+
+/** The grouping state the engine-honesty surfaces need. */
+export interface EngineStateView {
+  rung: 'nano' | 'heuristics' | 'domain-only' | 'paused';
+  pausedByUser: boolean;
+  nanoAvailability: NanoAvailability | 'unknown';
+}
+
+/** The active engine, named for the fallback-honesty label: while
+ * grouping runs on any fallback rung, the panel says which engine
+ * produced the suggestions — degraded quality is never silent. */
+export function engineLabel(
+  grouping: EngineStateView,
+  provider: ProviderChoice,
+): string {
+  switch (grouping.rung) {
+    case 'nano':
+      return 'On-device AI';
+    case 'domain-only':
+      return 'Same-site rules only';
+    case 'paused':
+      return 'None — grouping is paused';
+    case 'heuristics': {
+      if (provider === 'heuristics') return 'Local rules';
+      switch (nanoAvailabilityProblem(
+        grouping.nanoAvailability === 'unknown'
+          ? 'unavailable'
+          : grouping.nanoAvailability,
+      )) {
+        case 'not-downloaded':
+          return 'Local rules — on-device AI not ready';
+        case 'downloading':
+          return 'Local rules — on-device AI downloading';
+        default:
+          return 'Local rules — on-device AI unavailable';
+      }
+    }
+  }
+}
+
+/** The grouping status line, extended with the active engine
+ * whenever grouping is running on a fallback rung. On the nano rung
+ * and when paused it is exactly the passive status line. */
+export function suggestionEngineLine(
+  grouping: EngineStateView,
+  provider: ProviderChoice,
+): string {
+  const base = groupingStatusLine(grouping);
+  if (grouping.rung === 'heuristics' || grouping.rung === 'domain-only') {
+    return `Suggestions by ${engineLabel(grouping, provider)} · ${base}`;
+  }
+  return base;
+}
+
+/** The prominent Settings callout for the actionable model states.
+ * Null when there is nothing to act on: the model is ready, the
+ * user chose local rules, or the device cannot offer the model. */
+export interface ModelCallout {
+  kind: 'not-downloaded' | 'downloading';
+  headline: string;
+  body: string;
+  buttonLabel: string | null;
+}
+
+export function modelCallout(
+  grouping: EngineStateView,
+  provider: ProviderChoice,
+): ModelCallout | null {
+  if (provider !== 'nano') return null;
+  if (grouping.nanoAvailability === 'unknown') return null;
+  const problem = nanoAvailabilityProblem(grouping.nanoAvailability);
+  if (problem === 'not-downloaded') {
+    return {
+      kind: 'not-downloaded',
+      headline: 'On-device model not downloaded',
+      body: "Chrome has the model registered but not downloaded — it downloads the first time it's used. Grouping is using local rules (lower quality) until then; the button below performs that first use.",
+      buttonLabel: 'Download the on-device model',
+    };
+  }
+  if (problem === 'downloading') {
+    return {
+      kind: 'downloading',
+      headline: 'On-device model downloading',
+      body: 'Grouping is using local rules (lower quality) until the download finishes.',
+      buttonLabel: null,
+    };
+  }
+  return null;
 }
 
 /** Where a suggestion came from, in plain language. */

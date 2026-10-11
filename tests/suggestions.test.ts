@@ -274,3 +274,46 @@ describe('applyNanoJudgments', () => {
     expect(drafts).toEqual([]);
   });
 });
+
+describe('engine honesty — drafts carry the active rung', () => {
+  const tabs = () => [
+    recipeTab(1, 'Chicken soup recipe', 'https://a.example.com/soup'),
+    recipeTab(2, 'Chicken stew recipe', 'https://a.example.com/stew'),
+  ];
+
+  it('heuristics rung labels its drafts as heuristics', () => {
+    const drafts = buildSuggestions(baseInput({ tabs: tabs() }));
+    expect(drafts.length).toBeGreaterThan(0);
+    for (const d of drafts) {
+      expect(d.source).toBe('heuristics');
+      expect(d.nanoFallback).toBe(false);
+    }
+  });
+
+  it('domain-only rung labels its drafts as domain-only', () => {
+    const drafts = buildSuggestions(
+      baseInput({ tabs: tabs(), rung: 'domain-only' }),
+    );
+    expect(drafts.length).toBeGreaterThan(0);
+    for (const d of drafts) expect(d.source).toBe('domain-only');
+  });
+
+  it('nano rung: judged drafts are labeled nano; failed judgments stay flagged heuristics fallbacks', async () => {
+    const base = buildSuggestions(baseInput({ tabs: tabs(), rung: 'nano' }));
+    expect(base.length).toBeGreaterThan(0);
+    const judged = await applyNanoJudgments(base, [], () =>
+      Promise.resolve({
+        verdict: { action: 'new-topic' },
+        callFailed: false,
+      }),
+    );
+    for (const d of judged.drafts) expect(d.source).toBe('nano');
+    const failed = await applyNanoJudgments(base, [], () =>
+      Promise.resolve({ verdict: null, callFailed: true }),
+    );
+    for (const d of failed.drafts) {
+      expect(d.source).toBe('heuristics');
+      expect(d.nanoFallback).toBe(true);
+    }
+  });
+});

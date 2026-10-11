@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   describeMembers,
+  engineLabel,
   faviconFallbackLetter,
   hostLabel,
   hostPathLabel,
   lastUsedLabel,
+  modelCallout,
   pickDefaultKeepTabId,
   pluralize,
+  suggestionEngineLine,
   viewDescriptor,
+  type EngineStateView,
 } from '../src/lib/panel-model';
 
 describe('hostLabel', () => {
@@ -288,5 +292,64 @@ describe('pickDefaultKeepTabId', () => {
       ]),
     ).toBe(5);
     expect(pickDefaultKeepTabId([])).toBe(null);
+  });
+});
+
+describe('engine honesty — labels and callout (FIX 2)', () => {
+  const state = (over: Partial<EngineStateView> = {}): EngineStateView => ({
+    rung: 'heuristics',
+    pausedByUser: false,
+    nanoAvailability: 'downloadable',
+    ...over,
+  });
+
+  it('engineLabel names the active engine per rung and model state', () => {
+    expect(engineLabel(state({ rung: 'nano' }), 'nano')).toBe('On-device AI');
+    expect(engineLabel(state(), 'nano')).toBe(
+      'Local rules — on-device AI not ready',
+    );
+    expect(engineLabel(state({ nanoAvailability: 'downloading' }), 'nano')).toBe(
+      'Local rules — on-device AI downloading',
+    );
+    expect(engineLabel(state({ nanoAvailability: 'unavailable' }), 'nano')).toBe(
+      'Local rules — on-device AI unavailable',
+    );
+    expect(engineLabel(state(), 'heuristics')).toBe('Local rules');
+    expect(engineLabel(state({ rung: 'domain-only' }), 'nano')).toBe(
+      'Same-site rules only',
+    );
+    expect(
+      engineLabel(state({ rung: 'paused', pausedByUser: true }), 'nano'),
+    ).toBe('None — grouping is paused');
+  });
+
+  it('suggestionEngineLine labels fallback rungs and leaves nano/paused lines plain', () => {
+    expect(suggestionEngineLine(state({ rung: 'nano' }), 'nano')).toBe(
+      'Grouping: on-device AI',
+    );
+    expect(suggestionEngineLine(state(), 'nano')).toBe(
+      'Suggestions by Local rules — on-device AI not ready · Grouping: heuristics',
+    );
+    expect(suggestionEngineLine(state({ rung: 'domain-only' }), 'nano')).toBe(
+      'Suggestions by Same-site rules only · Grouping: domain only',
+    );
+    expect(
+      suggestionEngineLine(state({ rung: 'paused', pausedByUser: true }), 'nano'),
+    ).toBe('Grouping: paused');
+  });
+
+  it('modelCallout appears only for actionable nano states', () => {
+    const dl = modelCallout(state(), 'nano');
+    expect(dl?.kind).toBe('not-downloaded');
+    expect(dl?.buttonLabel).toBe('Download the on-device model');
+    expect(dl?.body).toContain('lower quality');
+    expect(dl?.body).toContain('registered but not downloaded');
+    const ing = modelCallout(state({ nanoAvailability: 'downloading' }), 'nano');
+    expect(ing?.kind).toBe('downloading');
+    expect(ing?.buttonLabel).toBeNull();
+    expect(modelCallout(state({ nanoAvailability: 'available' }), 'nano')).toBeNull();
+    expect(modelCallout(state({ nanoAvailability: 'unavailable' }), 'nano')).toBeNull();
+    expect(modelCallout(state({ nanoAvailability: 'unknown' }), 'nano')).toBeNull();
+    expect(modelCallout(state(), 'heuristics')).toBeNull();
   });
 });

@@ -88,6 +88,28 @@ button.primary {
   font-size: 12.5px;
 }
 
+/* --- On-device model callout (settings) ------------------------- */
+
+.callout {
+  padding: 10px 12px;
+  margin: 8px 0;
+  border: 1px solid rgb(11 87 208 / 0.55);
+  border-radius: 8px;
+  background: rgb(11 87 208 / 0.1);
+}
+
+.callout-headline {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 2px;
+}
+
+.callout progress {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+}
+
 #attention {
   border: 1px solid rgb(127 127 127 / 0.35);
   border-radius: 10px;

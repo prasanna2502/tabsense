@@ -11,11 +11,12 @@ import {
   describeMembers,
   diagnosticsLines,
   faviconFallbackLetter,
-  groupingStatusLine,
   hostLabel,
   lastUsedLabel,
+  modelCallout,
   pickDefaultKeepTabId,
   pluralize,
+  suggestionEngineLine,
   suggestionSourceLabel,
 } from '../../src/lib/panel-model';
 import {
@@ -24,7 +25,9 @@ import {
   CLOSE_DUPLICATE_SET_MESSAGE,
   CLOSE_SIMILAR_SET_MESSAGE,
   DISMISS_SUGGESTION_MESSAGE,
+  DOWNLOAD_MODEL_MESSAGE,
   GET_SNAPSHOT_MESSAGE,
+  NANO_DOWNLOAD_PROGRESS_MESSAGE,
   SET_AUTO_CLOSE_MESSAGE,
   SET_BLOCKLIST_MESSAGE,
   SET_GROUPING_PAUSED_MESSAGE,
@@ -123,6 +126,20 @@ const providerEl = document.getElementById(
   'opt-provider',
 ) as HTMLSelectElement | null;
 const aiStatusEl = document.getElementById('ai-status');
+const modelCalloutEl = document.getElementById('ai-model-callout');
+const modelCalloutHeadlineEl = document.getElementById(
+  'ai-model-callout-headline',
+);
+const modelCalloutBodyEl = document.getElementById('ai-model-callout-body');
+const modelDownloadBtn = document.getElementById(
+  'ai-model-download',
+) as HTMLButtonElement | null;
+const modelProgressEl = document.getElementById(
+  'ai-model-progress',
+) as HTMLProgressElement | null;
+const modelProgressTextEl = document.getElementById(
+  'ai-model-progress-text',
+);
 const groupingStatusSettingsEl = document.getElementById(
   'grouping-status-settings',
 );
@@ -169,6 +186,14 @@ const uiState = {
   /** The blocklist text last synced from the worker, so re-renders
    * never clobber text the user is editing. */
   blocklistSyncedText: null as string | null,
+  /** On-device model download initiated from this panel: the phase
+   * plus the latest progress fraction the worker broadcast (null =
+   * the browser reported none). Cleared when a snapshot shows the
+   * model available — the callout then disappears on its own. */
+  modelDownload: null as null | {
+    phase: 'starting' | 'downloading' | 'failed';
+    loaded: number | null;
+  },
 };
 
 let lastSnapshot: TabSnapshot | null = null;
@@ -732,7 +757,10 @@ function renderSuggestions(snapshot: TabSnapshot): void {
   const paused = snapshot.grouping.pausedByUser;
   suggestedSectionEl.hidden = snapshot.suggestions.length === 0 && !paused;
   if (groupingStatusEl) {
-    groupingStatusEl.textContent = groupingStatusLine(snapshot.grouping);
+    groupingStatusEl.textContent = suggestionEngineLine(
+      snapshot.grouping,
+      snapshot.settingsView.provider,
+    );
   }
   suggestionListEl.replaceChildren(
     ...snapshot.suggestions.map((sug) => suggestionCard(sug, snapshot)),
@@ -778,13 +806,75 @@ function aiStatusText(snapshot: TabSnapshot): string {
     case 'available':
       return 'On-device AI: available on this device.';
     case 'downloadable':
-      return 'On-device AI: the model is not downloaded yet — grouping uses local rules meanwhile.';
+      return 'On-device AI: the model is registered with Chrome but not downloaded yet — it downloads the first time it is used. Grouping uses local rules meanwhile.';
     case 'downloading':
       return 'On-device AI: model downloading — grouping uses local rules meanwhile.';
     case 'unavailable':
       return 'On-device AI: not available on this device — grouping uses local rules.';
     default:
       return 'On-device AI: status not checked yet.';
+  }
+}
+
+/** The prominent on-device model callout in Settings: visible
+ * while the model is missing or downloading — with the download
+ * action and live progress — and gone when there is nothing to act
+ * on, so degraded grouping quality is never silent. */
+function renderModelCallout(snapshot: TabSnapshot): void {
+  if (!modelCalloutEl) return;
+  if (snapshot.grouping.nanoAvailability === 'available') {
+    uiState.modelDownload = null;
+  }
+  const download = uiState.modelDownload;
+  const callout = modelCallout(
+    snapshot.grouping,
+    snapshot.settingsView.provider,
+  );
+  const show = callout !== null || download !== null;
+  modelCalloutEl.hidden = !show;
+  if (!show) return;
+  const busy =
+    download !== null &&
+    (download.phase === 'starting' || download.phase === 'downloading');
+  const failed = download?.phase === 'failed';
+  if (modelCalloutHeadlineEl) {
+    modelCalloutHeadlineEl.textContent = busy
+      ? 'Downloading the on-device model'
+      : failed
+        ? 'Model download did not start'
+        : (callout?.headline ?? '');
+  }
+  if (modelCalloutBodyEl) {
+    modelCalloutBodyEl.textContent = failed
+      ? 'Chrome did not start the download. Grouping keeps using local rules meanwhile — you can try again.'
+      : busy
+        ? 'Grouping keeps using local rules (lower quality) until the download finishes.'
+        : (callout?.body ?? '');
+  }
+  if (modelDownloadBtn) {
+    const showButton =
+      !busy && (failed || (callout?.buttonLabel ?? null) !== null);
+    modelDownloadBtn.hidden = !showButton;
+    modelDownloadBtn.textContent = failed
+      ? 'Try again'
+      : (callout?.buttonLabel ?? 'Download the on-device model');
+  }
+  if (modelProgressEl) {
+    modelProgressEl.hidden = !busy;
+    if (download?.loaded !== null && download?.loaded !== undefined) {
+      modelProgressEl.value = download.loaded;
+    } else {
+      modelProgressEl.removeAttribute('value');
+    }
+  }
+  if (modelProgressTextEl) {
+    modelProgressTextEl.hidden = !busy;
+    if (busy) {
+      modelProgressTextEl.textContent =
+        download?.loaded !== null && download?.loaded !== undefined
+          ? `Downloading… ${Math.round(download.loaded * 100)}%`
+          : 'Downloading…';
+    }
   }
 }
 
@@ -980,9 +1070,11 @@ function render(snapshot: TabSnapshot): void {
   if (aiStatusEl) {
     aiStatusEl.textContent = aiStatusText(snapshot);
   }
+  renderModelCallout(snapshot);
   if (groupingStatusSettingsEl) {
-    groupingStatusSettingsEl.textContent = groupingStatusLine(
+    groupingStatusSettingsEl.textContent = suggestionEngineLine(
       snapshot.grouping,
+      sv.provider,
     );
   }
   renderManagedNote('managed-blocklist', snapshot, 'blocklist');
@@ -1128,6 +1220,37 @@ if (providerEl) {
   });
 }
 
+if (modelDownloadBtn) {
+  modelDownloadBtn.addEventListener('click', () => {
+    // The click is the user activation the Prompt API requires to
+    // start the model download; the worker creates the session.
+    uiState.modelDownload = { phase: 'starting', loaded: null };
+    if (lastSnapshot) render(lastSnapshot);
+    void chrome.runtime
+      .sendMessage({ type: DOWNLOAD_MODEL_MESSAGE })
+      .then((res: { started?: boolean } | undefined) => {
+        if (!uiState.modelDownload) return;
+        if (res?.started === true) {
+          if (uiState.modelDownload.phase === 'starting') {
+            uiState.modelDownload = {
+              phase: 'downloading',
+              loaded: uiState.modelDownload.loaded,
+            };
+          }
+        } else {
+          uiState.modelDownload = { phase: 'failed', loaded: null };
+        }
+        void loadInitial();
+      })
+      .catch(() => {
+        if (uiState.modelDownload) {
+          uiState.modelDownload = { phase: 'failed', loaded: null };
+        }
+        if (lastSnapshot) render(lastSnapshot);
+      });
+  });
+}
+
 if (blocklistSaveBtn && blocklistInputEl) {
   blocklistSaveBtn.addEventListener('click', () => {
     const parsed = parseBlocklist(blocklistInputEl.value);
@@ -1174,6 +1297,17 @@ async function loadInitial(): Promise<void> {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[SNAPSHOT_KEY]?.newValue) {
     render(changes[SNAPSHOT_KEY].newValue as TabSnapshot);
+  }
+});
+
+// Model download progress broadcasts from the worker.
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type === NANO_DOWNLOAD_PROGRESS_MESSAGE) {
+    uiState.modelDownload = {
+      phase: 'downloading',
+      loaded: typeof message.loaded === 'number' ? message.loaded : null,
+    };
+    if (lastSnapshot) render(lastSnapshot);
   }
 });
 

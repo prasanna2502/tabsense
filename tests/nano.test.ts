@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildJudgePrompt,
+  downloadModel,
   judgeWithRetry,
+  nanoAvailabilityProblem,
   normalizeAvailability,
   validateVerdictText,
   type JudgeRequest,
   type LanguageModelLike,
+  type NanoDownloadMonitor,
   type NanoSession,
 } from '../src/lib/nano';
 
@@ -162,5 +165,66 @@ describe('judgeWithRetry', () => {
   it('the retry prompt is the simple template form', () => {
     expect(buildJudgePrompt(REQ, true)).toContain('Reply with JSON only');
     expect(buildJudgePrompt(REQ, false)).toContain('JSON object');
+  });
+});
+
+describe('nanoAvailabilityProblem', () => {
+  it('maps the availability states to settings-surface problems', () => {
+    expect(nanoAvailabilityProblem('available')).toBeNull();
+    expect(nanoAvailabilityProblem('downloadable')).toBe('not-downloaded');
+    expect(nanoAvailabilityProblem('downloading')).toBe('downloading');
+    expect(nanoAvailabilityProblem('unavailable')).toBe('unavailable');
+  });
+});
+
+describe('downloadModel', () => {
+  it('creates a session with a monitor, forwards progress, destroys the session', async () => {
+    let monitorFn: ((m: NanoDownloadMonitor) => void) | undefined;
+    let destroyed = 0;
+    const lm: LanguageModelLike = {
+      availability: () => Promise.resolve('downloadable'),
+      create: (options) => {
+        monitorFn = options?.monitor;
+        const session: NanoSession = {
+          prompt: () => Promise.resolve(''),
+          destroy: () => {
+            destroyed++;
+          },
+        };
+        return Promise.resolve(session);
+      },
+    };
+    const progress: (number | null)[] = [];
+    const ok = await downloadModel(lm, (loaded) => progress.push(loaded));
+    expect(ok).toBe(true);
+    expect(destroyed).toBe(1);
+    // Drive the captured monitor the way Chrome would.
+    let listener: ((event: { loaded?: number }) => void) | undefined;
+    monitorFn?.({
+      addEventListener: (_type, l) => {
+        listener = l;
+      },
+    });
+    listener?.({ loaded: 0.25 });
+    listener?.({ loaded: 1 });
+    listener?.({});
+    expect(progress).toEqual([0.25, 1, null]);
+  });
+
+  it('returns false (never throws) when session creation fails', async () => {
+    const lm: LanguageModelLike = {
+      availability: () => Promise.resolve('downloadable'),
+      create: () => Promise.reject(new Error('no user activation')),
+    };
+    await expect(downloadModel(lm)).resolves.toBe(false);
+  });
+
+  it('walks the availability states: downloadable → downloading → available', async () => {
+    // The state machine the settings surface renders: each raw
+    // state normalizes, then maps to its problem (or none).
+    const states = ['downloadable', 'downloading', 'available'] as const;
+    expect(
+      states.map((s) => nanoAvailabilityProblem(normalizeAvailability(s))),
+    ).toEqual(['not-downloaded', 'downloading', null]);
   });
 });

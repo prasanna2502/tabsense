@@ -25,6 +25,7 @@ import {
 } from '../src/lib/groups';
 import {
   detectLanguageModel,
+  downloadModel,
   judgeWithRetry,
   normalizeAvailability,
   type JudgeRequest,
@@ -49,11 +50,13 @@ import {
   CLOSE_SIMILAR_SET_MESSAGE,
   DISMISS_SUGGESTION_MESSAGE,
   DISMISSED_KEY,
+  DOWNLOAD_MODEL_MESSAGE,
   GET_SNAPSHOT_MESSAGE,
   GROUPS_KEY,
   GROUP_ACTIVITY_CAP,
   GROUP_ACTIVITY_KEY,
   LAST_ACTION_KEY,
+  NANO_DOWNLOAD_PROGRESS_MESSAGE,
   SETTINGS_KEY,
   SET_AUTO_CLOSE_MESSAGE,
   SET_BLOCKLIST_MESSAGE,
@@ -939,6 +942,30 @@ export default defineBackground(() => {
     return { undone };
   }
 
+  /**
+   * Panel-initiated on-device model download. The click in the
+   * panel is the user activation the Prompt API requires; creating
+   * a session starts the download, and its progress is broadcast
+   * to the panel while it runs. When the create resolves, the
+   * availability cache is invalidated and re-checked, so the
+   * snapshot's state line ("Grouping: on-device AI") and the next
+   * grouping pass pick the model up without waiting out the cache.
+   */
+  async function downloadNanoModel(): Promise<{ started: boolean }> {
+    const lm = detectLanguageModel();
+    if (!lm) return { started: false };
+    const started = await downloadModel(lm, (loaded) => {
+      void chrome.runtime
+        .sendMessage({ type: NANO_DOWNLOAD_PROGRESS_MESSAGE, loaded })
+        .catch(() => undefined);
+    });
+    nanoAvailabilityAt = 0; // force a fresh availability read
+    await currentNanoAvailability(Date.now());
+    scheduleRefreshSnapshot();
+    scheduleGroupingPass();
+    return { started };
+  }
+
   /** Read-modify-write of the local grouping settings object,
    * behind the managed-precedence rule: a field forced by policy
    * cannot be changed locally. */
@@ -1262,6 +1289,13 @@ export default defineBackground(() => {
   }
 
   async function refreshSnapshot(): Promise<void> {
+    // Proactive availability check: every snapshot refresh —
+    // worker start, panel open (the snapshot request handler), and
+    // event-driven refreshes — re-reads the model state (60 s
+    // cached inside currentNanoAvailability), so the panel never
+    // sits on "status not checked yet" while it is open. The read
+    // is a local API call off the tab-open path.
+    await currentNanoAvailability(Date.now());
     // M3 diagnostics: keep the storage-bytes figure fresh (throttled
     // to one read per 30 s; snapshot refreshes are event-driven and
     // off the tab-open path, and the read itself is async).
@@ -1615,6 +1649,10 @@ export default defineBackground(() => {
         'provider',
         message.provider === 'heuristics' ? 'heuristics' : 'nano',
       ).then(sendResponse);
+      return true;
+    }
+    if (message?.type === DOWNLOAD_MODEL_MESSAGE) {
+      void downloadNanoModel().then(sendResponse);
       return true;
     }
     if (message?.type === SET_BLOCKLIST_MESSAGE) {

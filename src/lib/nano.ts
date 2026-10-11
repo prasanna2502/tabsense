@@ -154,9 +154,23 @@ export interface NanoSession {
   destroy(): void;
 }
 
+/** The slice of the Prompt API's download monitor this client uses:
+ * Chrome fires `downloadprogress` events on it while the model
+ * downloads (loaded is a 0..1 fraction, when the browser reports
+ * one at all). */
+export interface NanoDownloadMonitor {
+  addEventListener(
+    type: 'downloadprogress',
+    listener: (event: { loaded?: number }) => void,
+  ): void;
+}
+
 export interface LanguageModelLike {
   availability(): Promise<unknown>;
-  create(options?: { systemPrompt?: string }): Promise<NanoSession>;
+  create(options?: {
+    systemPrompt?: string;
+    monitor?: (m: NanoDownloadMonitor) => void;
+  }): Promise<NanoSession>;
 }
 
 export function detectLanguageModel(
@@ -211,6 +225,66 @@ export function normalizeAvailability(raw: unknown): NanoAvailability {
       return 'downloading';
     default:
       return 'unavailable';
+  }
+}
+
+/** Why the on-device model cannot judge right now, for the
+ * settings surface: the not-downloaded states are actionable (a
+ * user gesture can start the download), `unavailable` is not. */
+export type NanoAvailabilityProblem =
+  | 'not-downloaded'
+  | 'downloading'
+  | 'unavailable';
+
+export function nanoAvailabilityProblem(
+  availability: NanoAvailability,
+): NanoAvailabilityProblem | null {
+  switch (availability) {
+    case 'available':
+      return null;
+    case 'downloadable':
+      return 'not-downloaded';
+    case 'downloading':
+      return 'downloading';
+    case 'unavailable':
+      return 'unavailable';
+  }
+}
+
+/**
+ * Trigger the on-device model download. The Prompt API only starts
+ * a download from a user activation, so this is called from a click
+ * handler chain (panel button → worker message → here); creating a
+ * session is what kicks the download off, and the monitor reports
+ * progress. The probe session is destroyed immediately — judging
+ * creates its own sessions. Returns true when the create resolved
+ * (download finished or the model became usable); false on any
+ * error. Never throws.
+ */
+export async function downloadModel(
+  lm: LanguageModelLike,
+  onProgress?: (loaded: number | null) => void,
+): Promise<boolean> {
+  let session: NanoSession | null = null;
+  try {
+    session = await lm.create({
+      monitor: (m) => {
+        m.addEventListener('downloadprogress', (event) => {
+          onProgress?.(
+            typeof event.loaded === 'number' ? event.loaded : null,
+          );
+        });
+      },
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try {
+      session?.destroy();
+    } catch {
+      // Same rationale as judgeAttempt: not worth failing over.
+    }
   }
 }
 

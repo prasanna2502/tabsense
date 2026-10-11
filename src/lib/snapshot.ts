@@ -263,6 +263,14 @@ export const UNDO_GROUP_ACTION_MESSAGE = 'suggestions:undo';
 export const SET_GROUPING_PAUSED_MESSAGE = 'settings:set-grouping-paused';
 export const SET_PROVIDER_MESSAGE = 'settings:set-provider';
 export const SET_BLOCKLIST_MESSAGE = 'settings:set-blocklist';
+/** Panel → worker: start the on-device model download (the click is
+ * the user activation the Prompt API requires). The worker answers
+ * {started} when the create resolves; progress rides the broadcast
+ * below while the download runs. */
+export const DOWNLOAD_MODEL_MESSAGE = 'settings:download-model';
+/** Worker → panel broadcast: model download progress ({loaded} is a
+ * 0..1 fraction or null when the browser reports none). */
+export const NANO_DOWNLOAD_PROGRESS_MESSAGE = 'nano:download-progress';
 
 /**
  * Whether a tab is outside the dedupe engine's scope: pinned tabs are

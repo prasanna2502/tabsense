@@ -104,6 +104,17 @@
         Managed by your organization
       </p>
       <p id="ai-status" class="note"></p>
+      <!-- Prominent only while the on-device model is missing or
+           downloading: degraded grouping quality is never silent. -->
+      <div id="ai-model-callout" class="callout" hidden>
+        <p id="ai-model-callout-headline" class="callout-headline"></p>
+        <p id="ai-model-callout-body" class="note"></p>
+        <button id="ai-model-download" type="button" class="primary">
+          Download the on-device model
+        </button>
+        <progress id="ai-model-progress" max="1" hidden></progress>
+        <p id="ai-model-progress-text" class="note" hidden></p>
+      </div>
       <p id="grouping-status-settings" class="note"></p>
 
       <h3 class="settings-heading">Never group these sites</h3>
