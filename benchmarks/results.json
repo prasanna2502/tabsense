@@ -1,7 +1,7 @@
 {
   "benchmark": "Benchmark-Lite",
   "milestone": "M2",
-  "date": "2026-10-09",
+  "date": "2026-10-11",
   "engine": "heuristics rung (TypeScript scorer, fixture-locked to the Rust core)",
   "nano": "not run — Gemini Nano is unavailable in CI/sandbox; heuristics-only floor",
   "sessions": [
@@ -91,18 +91,18 @@
       "suggestions": 1,
       "pairwise": {
         "precision": 1,
-        "recall": 1,
-        "f1": 1,
-        "tp": 6,
+        "recall": 0.5,
+        "f1": 0.6666666666666666,
+        "tp": 3,
         "fp": 0,
-        "fn": 0
+        "fn": 3
       },
       "bcubed": {
         "precision": 1,
-        "recall": 1,
-        "f1": 1
+        "recall": 0.7857142857142857,
+        "f1": 0.88
       },
-      "clicksToOrganized": 1,
+      "clicksToOrganized": 2,
       "manualBaselineClicks": 5
     },
     {
@@ -244,23 +244,103 @@
       },
       "clicksToOrganized": 5,
       "manualBaselineClicks": 5
+    },
+    {
+      "id": "docs-mixed-topics",
+      "tabs": 8,
+      "suggestions": 0,
+      "pairwise": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "tp": 0,
+        "fp": 0,
+        "fn": 0
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "clicksToOrganized": 0,
+      "manualBaselineClicks": 0
+    },
+    {
+      "id": "notion-mixed-topics",
+      "tabs": 5,
+      "suggestions": 0,
+      "pairwise": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "tp": 0,
+        "fp": 0,
+        "fn": 0
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "clicksToOrganized": 0,
+      "manualBaselineClicks": 0
+    },
+    {
+      "id": "docs-trip-planning",
+      "tabs": 4,
+      "suggestions": 1,
+      "pairwise": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "tp": 6,
+        "fp": 0,
+        "fn": 0
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "clicksToOrganized": 1,
+      "manualBaselineClicks": 5
+    },
+    {
+      "id": "notion-trip-planning",
+      "tabs": 3,
+      "suggestions": 1,
+      "pairwise": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "tp": 3,
+        "fp": 0,
+        "fn": 0
+      },
+      "bcubed": {
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "clicksToOrganized": 1,
+      "manualBaselineClicks": 4
     }
   ],
   "aggregate": {
     "pairwise": {
-      "precision": 0.7368421052631579,
-      "recall": 0.36363636363636365,
-      "f1": 0.48695652173913045,
-      "tp": 28,
+      "precision": 0.7727272727272727,
+      "recall": 0.3953488372093023,
+      "f1": 0.523076923076923,
+      "tp": 34,
       "fp": 10,
-      "fn": 49
+      "fn": 52
     },
     "bcubedItemWeighted": {
-      "precision": 0.9529411764705882,
-      "recall": 0.7270588235294118,
-      "f1": 0.7995166602228726
+      "precision": 0.9619047619047619,
+      "recall": 0.7647619047619048,
+      "f1": 0.8297039630375636
     },
-    "clicksToOrganized": 37,
-    "manualBaselineClicks": 64
+    "clicksToOrganized": 40,
+    "manualBaselineClicks": 73
   }
 }

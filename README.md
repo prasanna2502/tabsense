@@ -53,10 +53,10 @@ You review each suggestion. Include or exclude individual tabs, file it into a d
 
 ## Honest numbers
 
-TabSense ships with a small public benchmark (in [`benchmarks/`](benchmarks/)) that runs the production grouping pipeline over 12 scripted browsing sessions, 85 tabs in all, and compares it with organizing the same sessions by hand.
+TabSense ships with a small public benchmark (in [`benchmarks/`](benchmarks/)) that runs the production grouping pipeline over 16 scripted browsing sessions, 105 tabs in all, and compares it with organizing the same sessions by hand. The corpus includes a same-domain suite — unrelated Google Docs and Notion pages that must *not* be grouped together — which the engine now scores perfectly.
 
-- Getting organized took **37 clicks with TabSense vs 64 by hand, 42% fewer**.
-- Grouping quality at the current baseline: BCubed F1 80.0%, pairwise F1 48.7%. The misses are published too. The engine is deliberately cautious (a wrong suggestion costs more trust than a missed one), and it struggles where a topic is spread across sites that share few words.
+- Getting organized took **40 clicks with TabSense vs 73 by hand, 45% fewer**.
+- Grouping quality at the current baseline: BCubed F1 83.0%, pairwise F1 52.3%. The misses are published too. The engine is deliberately cautious (a wrong suggestion costs more trust than a missed one), and it struggles where a topic is spread across sites that share few words.
 
 These numbers are the floor. They were measured on the rules engine alone, because the AI judge does not run in CI. The full record is in `benchmarks/results.json`.
 
