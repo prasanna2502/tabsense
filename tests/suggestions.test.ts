@@ -7,8 +7,10 @@ import {
 } from '../src/lib/groups';
 import { tsScorer } from '../src/lib/scorer';
 import {
+  SuggestionEngineGuard,
   applyNanoJudgments,
   buildSuggestions,
+  groupingEngineKey,
   type EngineGroup,
   type EngineTab,
   type SuggestionDraft,
@@ -315,5 +317,55 @@ describe('engine honesty — drafts carry the active rung', () => {
       expect(d.source).toBe('heuristics');
       expect(d.nanoFallback).toBe(true);
     }
+  });
+});
+
+describe('SuggestionEngineGuard — engine-change invalidation (Phase 3)', () => {
+  const nanoKey = groupingEngineKey('nano', 'nano');
+  const heurKey = groupingEngineKey('nano', 'heuristics');
+
+  it('engine identity combines provider and rung', () => {
+    expect(groupingEngineKey('nano', 'nano')).toBe('nano:nano');
+    expect(groupingEngineKey('heuristics', 'heuristics')).toBe(
+      'heuristics:heuristics',
+    );
+    expect(nanoKey).not.toBe(heurKey);
+  });
+
+  it('no discard when the engine has not actually changed', () => {
+    const guard = new SuggestionEngineGuard();
+    guard.noteProduced(heurKey);
+    expect(guard.staleCount(heurKey, 23)).toBe(0);
+  });
+
+  it('all pending suggestions are stale after a rung change (heuristics → nano)', () => {
+    const guard = new SuggestionEngineGuard();
+    guard.noteProduced(heurKey);
+    expect(guard.staleCount(nanoKey, 23)).toBe(23);
+    guard.noteProduced(nanoKey);
+    expect(guard.staleCount(nanoKey, 23)).toBe(0);
+  });
+
+  it('a provider switch invalidates even at the same rung', () => {
+    const guard = new SuggestionEngineGuard();
+    guard.noteProduced(groupingEngineKey('nano', 'heuristics'));
+    expect(
+      guard.staleCount(groupingEngineKey('heuristics', 'heuristics'), 4),
+    ).toBe(4);
+  });
+
+  it('an empty inbox discards nothing, and an unknown producer discards nothing', () => {
+    const guard = new SuggestionEngineGuard();
+    guard.noteProduced(heurKey);
+    expect(guard.staleCount(nanoKey, 0)).toBe(0);
+    const fresh = new SuggestionEngineGuard();
+    expect(fresh.staleCount(nanoKey, 5)).toBe(0);
+  });
+
+  it('restored legacy suggestions are attributed to the old engine', () => {
+    const guard = new SuggestionEngineGuard();
+    guard.restore('legacy-unknown');
+    expect(guard.staleCount(nanoKey, 23)).toBe(23);
+    expect(guard.staleCount(heurKey, 23)).toBe(23);
   });
 });

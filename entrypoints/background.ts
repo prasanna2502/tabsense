@@ -66,6 +66,7 @@ import {
   SET_KEEP_INTENTIONAL_DUPLICATES_MESSAGE,
   SET_PROVIDER_MESSAGE,
   SNAPSHOT_KEY,
+  SUGGESTIONS_ENGINE_KEY,
   SUGGESTIONS_KEY,
   SWAP_SAMPLES_CAP,
   SWAP_SAMPLES_KEY,
@@ -82,8 +83,10 @@ import {
   type TabSnapshot,
 } from '../src/lib/snapshot';
 import {
+  SuggestionEngineGuard,
   applyNanoJudgments,
   buildSuggestions,
+  groupingEngineKey,
   type EngineGroup,
   type EngineTab,
   type SuggestionDraft,
@@ -254,6 +257,9 @@ export default defineBackground(() => {
    * a worker restart ends them, and pre-existing tabs are outside
    * the auto-close gate anyway). */
   const duplicateExemptions = new DuplicateExemptions();
+  /** Phase 3: which grouping engine produced the pending
+   * suggestions (persisted alongside them). */
+  const engineGuard = new SuggestionEngineGuard();
   let lastEffectiveRung: LadderRung = 'heuristics';
   let nanoAvailability: NanoAvailability | 'unknown' = 'unknown';
   let nanoAvailabilityAt = 0;
@@ -386,6 +392,7 @@ export default defineBackground(() => {
       [DISMISSED_KEY]: dismissals,
       [GROUP_ACTIVITY_KEY]: groupActivity,
       [SUGGESTIONS_KEY]: suggestions,
+      [SUGGESTIONS_ENGINE_KEY]: engineGuard.engineKey,
       [LAST_ACTION_KEY]: lastGroupAction,
     };
     groupStateWrite = groupStateWrite
@@ -556,6 +563,7 @@ export default defineBackground(() => {
     if (nanoAvailability !== 'unknown' && now - nanoAvailabilityAt < 60_000) {
       return nanoAvailability;
     }
+    const previous = nanoAvailability;
     const lm = detectLanguageModel();
     if (!lm) {
       nanoAvailability = 'unavailable';
@@ -568,6 +576,20 @@ export default defineBackground(() => {
       nanoAvailability = 'unavailable';
     }
     nanoAvailabilityAt = now;
+    // A model-state flip (e.g. the download finishing — including
+    // one triggered outside the extension) changes the effective
+    // grouping engine: schedule a pass so pending suggestions from
+    // the previous engine are invalidated and regenerated, instead
+    // of lingering until some unrelated tab event. Not while a
+    // pass is already running — that pass reads the new state
+    // itself.
+    if (
+      previous !== 'unknown' &&
+      nanoAvailability !== previous &&
+      !groupingPassRunning
+    ) {
+      scheduleGroupingPass();
+    }
     return nanoAvailability;
   }
 
@@ -607,10 +629,13 @@ export default defineBackground(() => {
       const settings = effective as EffectiveSettings;
       if (settings.groupingPaused) {
         lastEffectiveRung = 'paused';
+        engineGuard.noteProduced(
+          groupingEngineKey(settings.provider, 'paused'),
+        );
         if (suggestions.length > 0) {
           suggestions = [];
-          persistGroupState();
         }
+        persistGroupState();
         lastGroupingRunAt = Date.now();
         return;
       }
@@ -653,6 +678,32 @@ export default defineBackground(() => {
         }
       }
       lastEffectiveRung = rung;
+
+      // Engine-change invalidation (Phase 3): pending suggestions
+      // produced by a different engine — an earlier rung, the
+      // other provider, a tripped/recovered breaker, or a
+      // pre-tracking build — are stale. Discard them (logged)
+      // before this pass regenerates under the current engine.
+      // Acted-on suggestions are already out of the pending set;
+      // they are history and stay untouched.
+      const engineKey = groupingEngineKey(settings.provider, rung);
+      const staleCount = engineGuard.staleCount(
+        engineKey,
+        suggestions.length,
+      );
+      if (staleCount > 0) {
+        appendActivity({
+          id: `${now}-engine-discard`,
+          url: '',
+          title: `Discarded ${staleCount} suggestion${staleCount === 1 ? '' : 's'} from the previous grouping engine`,
+          closedTabId: -1,
+          keptTabId: -1,
+          closedAt: now,
+          reason: 'group-discard',
+        });
+        suggestions = [];
+      }
+      engineGuard.noteProduced(engineKey);
 
       let drafts = buildSuggestions({
         tabs: engineTabs,
@@ -1502,6 +1553,7 @@ export default defineBackground(() => {
         DISMISSED_KEY,
         GROUP_ACTIVITY_KEY,
         SUGGESTIONS_KEY,
+        SUGGESTIONS_ENGINE_KEY,
         LAST_ACTION_KEY,
       ]);
       if (Array.isArray(stored[ACTIVITY_KEY])) {
@@ -1526,6 +1578,15 @@ export default defineBackground(() => {
       }
       if (Array.isArray(stored[SUGGESTIONS_KEY])) {
         suggestions = stored[SUGGESTIONS_KEY] as Suggestion[];
+      }
+      if (typeof stored[SUGGESTIONS_ENGINE_KEY] === 'string') {
+        engineGuard.restore(stored[SUGGESTIONS_ENGINE_KEY]);
+      } else if (suggestions.length > 0) {
+        // Suggestions persisted before the engine identity was
+        // tracked: attribute them to an unknown older engine so
+        // the first pass under the current one discards and logs
+        // them rather than letting them linger.
+        engineGuard.restore('legacy-unknown');
       }
       if (
         typeof stored[LAST_ACTION_KEY] === 'object' &&

@@ -52,7 +52,8 @@ export interface ActivityEntry {
     | 'kept-intentional'
     | 'group-accept'
     | 'group-dismiss'
-    | 'group-undo';
+    | 'group-undo'
+    | 'group-discard';
 }
 
 /** One grouping activity entry in the dedicated grouping log (M2):
@@ -213,6 +214,9 @@ export const SETTINGS_KEY = 'autoCloseEnabled';
 
 /** M2 grouping state keys (chrome.storage.local). */
 export const SUGGESTIONS_KEY = 'suggestions';
+/** Phase 3: which grouping engine produced the persisted pending
+ * suggestions (see SuggestionEngineGuard). */
+export const SUGGESTIONS_ENGINE_KEY = 'suggestionsEngine';
 export const GROUPS_KEY = 'tabSenseGroups';
 export const DISMISSED_KEY = 'dismissedSuggestions';
 export const GROUP_ACTIVITY_KEY = 'groupActivity';
