@@ -138,3 +138,32 @@ with the CI evidence and **both recommendations were adopted on
   with a per-round warm-up discard — the aggregation issue noted
   above. The exit clock starts at the first fully green CI perf
   run under this methodology.
+
+---
+
+## Addendum — throttled p95 pooled percentile (2026-10-11)
+
+The ratification run (PR #2) left exactly one red row: the
+throttled p95 under median-of-rounds (101.07 ms vs <25 ms).
+Put to the user with the per-round evidence, the
+**pooled-percentile statistic was approved on 2026-10-11**.
+Full detail: `docs/progress/m3-throttled-pooled-p95-2026-10-11.md`.
+
+- **Throttled p95 — STATISTIC CHANGED, budget unchanged.**
+  The gate is now pooled-p95(on) − pooled-p95(off) over all
+  rounds' raw samples pooled per condition (~195 samples per
+  pool), against the same <25 ms budget. Warm median/p95 and
+  the throttled median keep median-of-rounds; the superseded
+  statistic and the per-round deltas remain in the artifact
+  informationally.
+- **CI (PR #3, run 38158520765): the pooled throttled p95
+  PASSED at -37.7 ms** (pooled p95s 894.1 on / 931.8 off,
+  193/190 samples). The run is **not fully green**: the
+  throttled added-latency *median* — a row this change did
+  not touch — gated at 21.61 ms vs <10 ms (per-round deltas
+  +86.92, -4.10, +43.37, +21.61, +11.16; PR #2's run gated
+  the same row at -5.54 ms). Every other row passed,
+  including both ratified churn bounds (0.018 KB/cycle,
+  0.099 MB). **The exit clock has not started.** What to do
+  about the throttled median row is a fresh decision; no
+  further tuning was applied.

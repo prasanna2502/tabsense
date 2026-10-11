@@ -40,7 +40,7 @@ import {
   openTabsUntilCount,
 } from './tabs.mjs';
 import { leastSquaresSlope, median, round, summarize } from './stats.mjs';
-import { churnChecks, medianOfRounds } from './gates.mjs';
+import { churnChecks, medianOfRounds, pooledP95Delta } from './gates.mjs';
 
 const MB = 1024 * 1024;
 const KB = 1024;
@@ -163,6 +163,18 @@ export async function scenarioLatency(ctx) {
   // Cold stays single-shot and informational, as before. Round count
   // is overridable for local diagnosis (PERF_LATENCY_ROUNDS); any
   // non-default count is disclosed in the report notes.
+  //
+  // Follow-up (user decision, 2026-10-11): the ratification run's one
+  // red row was the throttled p95 under median-of-rounds (101.07 ms
+  // vs <25 ms) — three of five per-round p95 deltas drew > +100 ms,
+  // because each is a difference of two tail order statistics over
+  // ~39 samples. The THROTTLED p95 gate therefore pools the raw
+  // samples of all rounds per condition and gates on the difference
+  // of the two pooled p95s (budgets.mjs pooledP95Delta). Every other
+  // statistic — warm median/p95, throttled median — keeps the
+  // ratified median-of-rounds; the superseded throttled median-of-
+  // rounds p95 is still reported informationally, and the per-round
+  // p95 deltas stay in measurements.rounds.
   const ROUNDS = Math.max(1, Number(process.env.PERF_LATENCY_ROUNDS) || 5);
   result.measurements.roundsRequested = ROUNDS;
 
@@ -240,6 +252,11 @@ export async function scenarioLatency(ctx) {
   const coldDeltaMedian = deltaOf(coldRun, coldBaseline, 'median');
   const coldDeltaP95 = deltaOf(coldRun, coldBaseline, 'p95');
 
+  const throttledP95MedianOfRounds = medianOfRounds(rounds.map((e) => e.deltasMs.throttled.p95));
+  const throttledPooled = pooledP95Delta(
+    rounds.map((e) => e.throttled.durationsMs),
+    rounds.map((e) => e.baselineThrottled.durationsMs),
+  );
   const gated = {
     warm: {
       median: medianOfRounds(rounds.map((e) => e.deltasMs.warm.median)),
@@ -247,21 +264,35 @@ export async function scenarioLatency(ctx) {
     },
     throttled: {
       median: medianOfRounds(rounds.map((e) => e.deltasMs.throttled.median)),
-      p95: medianOfRounds(rounds.map((e) => e.deltasMs.throttled.p95)),
+      p95: throttledPooled.delta,
     },
   };
 
   result.measurements.rounds = rounds;
+  result.measurements.throttledP95Pooled = {
+    onCount: throttledPooled.onCount,
+    offCount: throttledPooled.offCount,
+    onP95Ms: round(throttledPooled.onP95),
+    offP95Ms: round(throttledPooled.offP95),
+    deltaMs: round(throttledPooled.delta),
+  };
   result.measurements.cold = { ...runStats(coldRun), deltasMs: { median: round(coldDeltaMedian), p95: round(coldDeltaP95) } };
   result.measurements.deltasMs = {
     warm: { median: round(gated.warm.median), p95: round(gated.warm.p95) },
     cold: { median: round(coldDeltaMedian), p95: round(coldDeltaP95) },
-    throttled: { median: round(gated.throttled.median), p95: round(gated.throttled.p95) },
+    throttled: {
+      median: round(gated.throttled.median),
+      p95: round(gated.throttled.p95),
+      p95MedianOfRounds: round(throttledP95MedianOfRounds),
+    },
   };
   result.measurements.gatingMethod =
-    `Median across ${ROUNDS} round(s) of per-round extension-on minus extension-off deltas (M3 ratification, 2026-10-11). Per-round raw values are in measurements.rounds.`;
+    `Median across ${ROUNDS} round(s) of per-round extension-on minus extension-off deltas (M3 ratification, 2026-10-11) — except the throttled p95, which pools all rounds' raw samples per condition and gates on pooled-p95(on) minus pooled-p95(off) (follow-up, 2026-10-11; see measurements.throttledP95Pooled). Per-round raw values are in measurements.rounds.`;
   result.notes.push(
     'First tab of each batch discarded (browser warm-up noise). Each latency round runs a fresh baseline and a fresh extension browser; throttled rounds compare extension vs baseline both under 4x CPU throttling. Cold is a single 24-tab extension batch compared against round 1\'s baseline, informational only.',
+  );
+  result.notes.push(
+    `Throttled p95 gate statistic (follow-up, user decision 2026-10-11): pooled percentile across all ${ROUNDS} rounds — ${throttledPooled.onCount} extension-on and ${throttledPooled.offCount} extension-off samples pooled per condition; pooled p95 on = ${round(throttledPooled.onP95)} ms, off = ${round(throttledPooled.offP95)} ms, gated delta = ${round(throttledPooled.delta)} ms against the unchanged <25 ms budget. The superseded median-of-rounds statistic (${round(throttledP95MedianOfRounds)} ms this run) is reported informationally below, and the per-round p95 deltas remain in measurements.rounds — the noise stays visible; only the verdict statistic changed. No budget number changed.`,
   );
   if (ROUNDS !== 5) {
     result.notes.push(`PERF_LATENCY_ROUNDS=${ROUNDS} (non-default): this run used ${ROUNDS} round(s) instead of the ratified 5.`);
@@ -273,7 +304,8 @@ export async function scenarioLatency(ctx) {
     gate(ctx, 'tab-open-added-latency-median', `Warm added latency, median (median of ${ROUNDS} rounds)`, gated.warm.median, gated.warm.median !== null && gated.warm.median < medianBudget),
     gate(ctx, 'tab-open-added-latency-p95', `Warm added latency, p95 (median of ${ROUNDS} rounds)`, gated.warm.p95, gated.warm.p95 !== null && gated.warm.p95 < p95Budget),
     gate(ctx, 'tab-open-added-latency-median', `Throttled (4x CPU) added latency, median (median of ${ROUNDS} rounds)`, gated.throttled.median, gated.throttled.median !== null && gated.throttled.median < medianBudget),
-    gate(ctx, 'tab-open-added-latency-p95', `Throttled (4x CPU) added latency, p95 (median of ${ROUNDS} rounds)`, gated.throttled.p95, gated.throttled.p95 !== null && gated.throttled.p95 < p95Budget),
+    gate(ctx, 'tab-open-added-latency-p95', `Throttled (4x CPU) added latency, p95 (pooled across ${ROUNDS} rounds: ${throttledPooled.onCount} on / ${throttledPooled.offCount} off samples)`, gated.throttled.p95, gated.throttled.p95 !== null && gated.throttled.p95 < p95Budget),
+    gate(ctx, 'tab-open-added-latency-p95', `Throttled (4x CPU) added latency, p95 (median of ${ROUNDS} rounds — superseded statistic, informational)`, throttledP95MedianOfRounds, throttledP95MedianOfRounds !== null && throttledP95MedianOfRounds < p95Budget, false),
     gate(ctx, 'tab-open-added-latency-median', 'Cold added latency, median (informational)', coldDeltaMedian, coldDeltaMedian !== null && coldDeltaMedian < medianBudget, false),
     gate(ctx, 'tab-open-added-latency-p95', 'Cold added latency, p95 (informational)', coldDeltaP95, coldDeltaP95 !== null && coldDeltaP95 < p95Budget, false),
   );

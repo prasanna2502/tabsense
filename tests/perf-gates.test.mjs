@@ -9,7 +9,9 @@
 
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error — plain .mjs harness module, no type declarations
-import { churnChecks, compareBudget, medianOfRounds } from '../scripts/perf/gates.mjs';
+import { churnChecks, compareBudget, medianOfRounds, pooledP95Delta } from '../scripts/perf/gates.mjs';
+// @ts-expect-error — plain .mjs harness module, no type declarations
+import { p95 } from '../scripts/perf/stats.mjs';
 // @ts-expect-error — plain .mjs harness module, no type declarations
 import budgetsFile from '../perf-budgets.json' with { type: 'json' };
 
@@ -70,6 +72,93 @@ describe('medianOfRounds — the ratified latency statistic', () => {
     expect(medianOfRounds([null, 5, null, 9, 7])).toBe(7);
     expect(medianOfRounds([null, null])).toBeNull();
     expect(medianOfRounds([])).toBeNull();
+  });
+});
+
+describe('pooledP95Delta — throttled p95 statistic (M3 gate follow-up, 2026-10-11)', () => {
+  it('pools samples across rounds and takes one p95 per condition', () => {
+    // Pooled on = [10,20,30,40,50] (n=5, nearest-rank p95 = max = 50);
+    // pooled off = [5,15,25,35,45] (p95 = 45).
+    const r = pooledP95Delta(
+      [
+        [10, 20, 30],
+        [40, 50],
+      ],
+      [
+        [5, 15, 25],
+        [35, 45],
+      ],
+    );
+    expect(r).toEqual({ onCount: 5, offCount: 5, onP95: 50, offP95: 45, delta: 5 });
+  });
+
+  it('uses the harness percentile convention on the pooled set (nearest-rank)', () => {
+    const on = [
+      [3, 1, 4],
+      [1, 5, 9, 2, 6],
+    ];
+    const off = [[8, 8], [8, 8, 8, 8, 8, 8, 8]];
+    const r = pooledP95Delta(on, off);
+    expect(r.onP95).toBe(p95(on.flat()));
+    expect(r.offP95).toBe(p95(off.flat()));
+    expect(r.onCount).toBe(8);
+    expect(r.offCount).toBe(9);
+  });
+
+  it('is not the median of per-round p95 deltas (the statistic it replaces)', () => {
+    // Two rounds whose per-round p95 deltas are +110 and +10 ms
+    // (median-of-rounds: 60 ms). Pooling the raw samples weighs the
+    // tail by all 8 samples per condition instead: pooled p95s are
+    // 200 (on) and 190 (off) — a 10 ms delta.
+    const on = [
+      [100, 100, 100, 200],
+      [100, 100, 100, 200],
+    ];
+    const off = [
+      [90, 90, 90, 90],
+      [90, 90, 90, 190],
+    ];
+    const perRoundDeltas = on.map((round, i) => p95(round) - p95(off[i]));
+    expect(perRoundDeltas).toEqual([110, 10]);
+    expect(medianOfRounds(perRoundDeltas)).toBe(60);
+    const r = pooledP95Delta(on, off);
+    expect(r).toMatchObject({ onCount: 8, offCount: 8, onP95: 200, offP95: 190, delta: 10 });
+  });
+
+  it('delta is negative when the extension pool is faster', () => {
+    const r = pooledP95Delta([[50, 60]], [[100, 110]]);
+    expect(r.onP95).toBe(60);
+    expect(r.offP95).toBe(110);
+    expect(r.delta).toBe(-50);
+  });
+
+  it('a single sample per pool still produces a delta', () => {
+    expect(pooledP95Delta([[42]], [[40]])).toEqual({
+      onCount: 1,
+      offCount: 1,
+      onP95: 42,
+      offP95: 40,
+      delta: 2,
+    });
+  });
+
+  it('empty pools yield nulls (the gate then fails via compareBudget)', () => {
+    expect(pooledP95Delta([], [])).toEqual({
+      onCount: 0,
+      offCount: 0,
+      onP95: null,
+      offP95: null,
+      delta: null,
+    });
+    expect(pooledP95Delta([[], []], [[1, 2]])).toMatchObject({ onCount: 0, onP95: null, delta: null });
+    expect(pooledP95Delta([[1, 2]], [])).toMatchObject({ offCount: 0, offP95: null, delta: null });
+  });
+
+  it('ignores non-finite samples instead of poisoning the pool', () => {
+    const r = pooledP95Delta([[Number.NaN, 10, Number.POSITIVE_INFINITY, 20]], [[5]]);
+    expect(r.onCount).toBe(2);
+    expect(r.onP95).toBe(20);
+    expect(r.delta).toBe(15);
   });
 });
 
