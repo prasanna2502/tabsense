@@ -40,7 +40,13 @@ import {
   openTabsUntilCount,
 } from './tabs.mjs';
 import { leastSquaresSlope, median, round, summarize } from './stats.mjs';
-import { churnChecks, medianOfRounds, pooledP95Delta } from './gates.mjs';
+import {
+  abbaQuartetDeltas,
+  churnChecks,
+  medianOfRounds,
+  pairedBlockMedianDelta,
+  pooledP95Delta,
+} from './gates.mjs';
 
 const MB = 1024 * 1024;
 const KB = 1024;
@@ -99,15 +105,149 @@ async function warmUpExtension(cdp, result, { timeoutMs = 20_000 } = {}) {
 // 1. LATENCY — tab-open added latency, extension on vs off
 // ------------------------------------------------------------------
 
-/** Ordered URL list: `unique` fresh paths, then `dupCount` repeats of
- * the earliest paths (duplicates of tabs opened in the same batch). */
-function latencyUrls(fixture, start, unique, dupCount) {
+/**
+ * Unique-only URL list for the latency batches (M3 gate design
+ * change, user-approved 2026-10-11): ordinary tab opens only.
+ * Duplicate opens used to make up a quarter of each batch; their
+ * lifecycle differs by condition (the extension auto-closes them —
+ * a detach outcome — while the baseline loads them fully), which
+ * contaminates the added-latency estimand in both directions. The
+ * duplicate path keeps its own budget and scenario
+ * (duplicate-focus-swap), so nothing loses coverage.
+ */
+function latencyUrls(fixture, start, count) {
   const urls = [];
-  for (let i = 0; i < unique; i++) urls.push(fixture.url(`/p/${start + i}`));
-  for (let i = 0; i < dupCount; i++) urls.push(fixture.url(`/p/${start + i}`));
+  for (let i = 0; i < count; i++) urls.push(fixture.url(`/p/${start + i}`));
   return urls;
 }
 
+/** Tab-opens per interleaved block (~5; scenario shape). */
+const LATENCY_BLOCK_SIZE = 5;
+/**
+ * Unmeasured warm-up opens per browser per round in the
+ * interleaved profiles. They replace the old per-batch first-tab
+ * discard for those profiles: the discard existed because every
+ * batch started in a cold browser (first renderer spawn, first
+ * fixture connection, JIT), and one warm-up block per browser
+ * covers the same ground without taxing the first sample of
+ * every block — measured blocks run entirely in warm browsers,
+ * so no per-block discard is applied.
+ */
+const LATENCY_WARMUP_OPENS = 3;
+
+/** One sequential block of tab opens in a running browser.
+ * Timeouts are excluded from the durations (the longstanding
+ * convention); outcomes are counted in full. */
+async function openLatencyBlock(cdp, urls) {
+  const batch = await openBatchSequential(cdp, urls, { timeoutMs: 20_000 });
+  const outcomes = { load: 0, detached: 0, timeout: 0 };
+  for (const r of batch) outcomes[r.outcome]++;
+  const durations = batch.filter((r) => r.outcome !== 'timeout').map((r) => r.ms);
+  return { durations, stats: summarize(durations), outcomes };
+}
+
+function blockStats(blk) {
+  return {
+    count: blk.stats.count,
+    medianMs: round(blk.stats.median),
+    p95Ms: round(blk.stats.p95),
+    meanMs: round(blk.stats.mean),
+    outcomes: blk.outcomes,
+    durationsMs: blk.durations.map((d) => round(d, 1)),
+  };
+}
+
+/**
+ * Launch one latency browser (baseline or extension; page CPU
+ * throttling when the profile asks for it). Extension browsers
+ * are warmed through the diagnostics contract before any measured
+ * block, as the sequential runs did. close() always tears the
+ * browser and its profile down.
+ */
+async function launchLatencyBrowser(ctx, result, { extension, throttleRate }) {
+  const profileDir = makeProfileDir();
+  let browser = null;
+  try {
+    browser = await launchChrome({
+      profileDir,
+      extensionDir: extension ? ctx.extensionDir : null,
+    });
+  } catch (err) {
+    removeProfileDir(profileDir);
+    throw err;
+  }
+  const { cdp } = browser;
+  if (throttleRate > 0) {
+    cdp.addAttachedHook(async ({ sessionId, targetInfo }) => {
+      if (targetInfo.type === 'page') {
+        await cdp
+          .send('Emulation.setCPUThrottlingRate', { rate: throttleRate }, sessionId)
+          .catch(() => {});
+      }
+    });
+  }
+  if (extension) {
+    await warmUpExtension(cdp, result);
+  }
+  return {
+    cdp,
+    openBlock: (urls) => openLatencyBlock(cdp, urls),
+    async close() {
+      await browser.close({ graceful: false }).catch(() => {});
+      removeProfileDir(profileDir);
+    },
+  };
+}
+
+/**
+ * One interleaved profile run (M3 gate design change, 2026-10-11):
+ * a baseline browser and an extension browser are alive at the
+ * same time and open tabs in alternating ABBA blocks of
+ * LATENCY_BLOCK_SIZE opens, so both conditions sample the same
+ * minutes of runner weather and slow drift is common-mode between
+ * paired blocks. Each browser first opens an unmeasured warm-up
+ * block (see LATENCY_WARMUP_OPENS). Returns the ordered block
+ * records; ABBA quartets pair within the returned order.
+ */
+async function runInterleavedProfile(ctx, result, { label, throttleRate, urls, warmupUrls }) {
+  const off = await launchLatencyBrowser(ctx, result, { extension: false, throttleRate });
+  let on = null;
+  try {
+    on = await launchLatencyBrowser(ctx, result, { extension: true, throttleRate });
+    await off.openBlock(warmupUrls);
+    await on.openBlock(warmupUrls);
+    const chunks = [];
+    for (let i = 0; i < urls.length; i += LATENCY_BLOCK_SIZE) {
+      chunks.push(urls.slice(i, i + LATENCY_BLOCK_SIZE));
+    }
+    const blocks = [];
+    let offIdx = 0;
+    let onIdx = 0;
+    const pushBlock = async (condition) => {
+      const handle = condition === 'on' ? on : off;
+      const chunk = condition === 'on' ? chunks[onIdx++] : chunks[offIdx++];
+      const blk = await handle.openBlock(chunk);
+      const rec = { index: blocks.length, condition, ...blockStats(blk) };
+      blocks.push(rec);
+      ctx.log(
+        `latency/${label} block ${rec.index} (${condition}): n=${rec.count} median=${rec.medianMs} ms p95=${rec.p95Ms} ms outcomes=${JSON.stringify(rec.outcomes)}`,
+      );
+    };
+    while (offIdx < chunks.length || onIdx < chunks.length) {
+      for (const condition of ['off', 'on', 'on', 'off']) {
+        if (condition === 'off' && offIdx < chunks.length) await pushBlock('off');
+        else if (condition === 'on' && onIdx < chunks.length) await pushBlock('on');
+      }
+    }
+    return { blocks };
+  } finally {
+    await off.close().catch(() => {});
+    if (on) await on.close().catch(() => {});
+  }
+}
+
+/** Single-browser batch run — now used only by the cold profile,
+ * which stays single-shot and informational. */
 async function runLatencyVariant(ctx, result, { label, extension, throttleRate, urls }) {
   const profileDir = makeProfileDir();
   let browser = null;
@@ -150,31 +290,47 @@ async function runLatencyVariant(ctx, result, { label, extension, throttleRate, 
 export async function scenarioLatency(ctx) {
   const t0 = performance.now();
   const result = baseResult('latency', 'Tab-open added latency (extension on vs off)');
-  const warmList = latencyUrls(ctx.fixture, 0, 45, 15); // 60 tabs
-  const coldList = latencyUrls(ctx.fixture, 100, 18, 6); // 24 tabs
-  const throttledList = latencyUrls(ctx.fixture, 200, 30, 10); // 40 tabs
+  const warmList = latencyUrls(ctx.fixture, 0, 60); // 60 unique tabs per condition
+  const coldList = latencyUrls(ctx.fixture, 100, 24); // 24 unique tabs
+  const throttledList = latencyUrls(ctx.fixture, 200, 40); // 40 unique tabs per condition
 
-  // M3 ratification (2026-10-11): single-shot on/off deltas on shared
-  // CI runners are noise-dominated (throttled p95 swung +97.5 ms to
-  // -43 ms on equivalent code). Warm and throttled profiles therefore
-  // run ROUNDS repetitions of baseline+extension and the gate is the
-  // MEDIAN across rounds of each round's added median / p95. All
-  // rounds run and are reported; there are no retries-until-pass.
-  // Cold stays single-shot and informational, as before. Round count
-  // is overridable for local diagnosis (PERF_LATENCY_ROUNDS); any
-  // non-default count is disclosed in the report notes.
-  //
-  // Follow-up (user decision, 2026-10-11): the ratification run's one
-  // red row was the throttled p95 under median-of-rounds (101.07 ms
-  // vs <25 ms) — three of five per-round p95 deltas drew > +100 ms,
-  // because each is a difference of two tail order statistics over
-  // ~39 samples. The THROTTLED p95 gate therefore pools the raw
-  // samples of all rounds per condition and gates on the difference
-  // of the two pooled p95s (budgets.mjs pooledP95Delta). Every other
-  // statistic — warm median/p95, throttled median — keeps the
-  // ratified median-of-rounds; the superseded throttled median-of-
-  // rounds p95 is still reported informationally, and the per-round
-  // p95 deltas stay in measurements.rounds.
+  // Methodology history (all user decisions, recorded in
+  // perf-budgets.json's notes):
+  //  - M3 ratification (2026-10-11): single-shot on/off deltas on
+  //    shared CI runners are noise-dominated (throttled p95 swung
+  //    +97.5 ms to -43 ms on equivalent code), so the warm and
+  //    throttled profiles run ROUNDS repetitions and gate on
+  //    robust across-round statistics. All rounds run and are
+  //    reported; there are no retries-until-pass. Cold stays
+  //    single-shot and informational, as before. Round count is
+  //    overridable for local diagnosis (PERF_LATENCY_ROUNDS); any
+  //    non-default count is disclosed in the report notes.
+  //  - Follow-up (2026-10-11): the throttled p95 gate pools all
+  //    rounds' raw samples per condition and gates on the
+  //    difference of the two pooled p95s (gates.mjs
+  //    pooledP95Delta); the superseded median-of-rounds p95 is
+  //    still reported informationally.
+  //  - Design change (2026-10-11): PR #3's run passed that pooled
+  //    p95 (-37.7 ms) but failed the throttled MEDIAN at 21.61 ms
+  //    vs <10 ms — a row that read -5.54 ms in PR #2's run on
+  //    unchanged extension code. Sequential per-round blocks (a
+  //    full baseline browser run, then a full extension browser
+  //    run, minutes apart) let runner drift sign the delta, and
+  //    the design's run-to-run swing (~±30 ms) exceeds the budget
+  //    it enforces. The profiles now measure INTERLEAVED
+  //    (runInterleavedProfile): two live browsers alternate ABBA
+  //    blocks of LATENCY_BLOCK_SIZE opens, and the added-latency
+  //    MEDIAN (warm and throttled) gates on the median of the
+  //    paired block differences (gates.mjs
+  //    pairedBlockMedianDelta) — within each ABBA quartet the two
+  //    conditions' time centroids coincide, so linear drift
+  //    cancels in the paired difference. The warm p95 keeps the
+  //    ratified median-of-rounds, computed from each round's
+  //    block samples aggregated per condition; the throttled p95
+  //    keeps the pooled statistic over the interleaved samples.
+  //    The batches are unique-only (see latencyUrls). Superseded
+  //    statistics stay in the report informationally — the noise
+  //    stays visible; only the verdict statistics changed.
   const ROUNDS = Math.max(1, Number(process.env.PERF_LATENCY_ROUNDS) || 5);
   result.measurements.roundsRequested = ROUNDS;
 
@@ -190,58 +346,64 @@ export async function scenarioLatency(ctx) {
     outcomes: v.outcomes,
     durationsMs: v.durations.map((d) => round(d, 1)),
   });
+  /** Aggregate one condition of an interleaved profile run from
+   * its blocks (the per-round view the superseded statistics and
+   * the warm p95 gate are computed from). */
+  const conditionStats = (blocks, condition) => {
+    const durations = blocks.filter((b) => b.condition === condition).flatMap((b) => b.durationsMs);
+    const stats = summarize(durations);
+    return {
+      count: stats.count,
+      medianMs: round(stats.median),
+      p95Ms: round(stats.p95),
+      meanMs: round(stats.mean),
+      durationsMs: durations,
+    };
+  };
+  const statDelta = (on, off, key) =>
+    on[key] !== null && off[key] !== null ? on[key] - off[key] : null;
+  const profileSummary = (profile) => {
+    const on = conditionStats(profile.blocks, 'on');
+    const off = conditionStats(profile.blocks, 'off');
+    return {
+      blocks: profile.blocks,
+      on,
+      off,
+      pairedDiffsMs: abbaQuartetDeltas(profile.blocks).diffsMs.map((d) => round(d)),
+      deltasMs: {
+        median: round(statDelta(on, off, 'medianMs')),
+        p95: round(statDelta(on, off, 'p95Ms')),
+      },
+    };
+  };
 
   const rounds = [];
   for (let r = 1; r <= ROUNDS; r++) {
-    const baseline = await runLatencyVariant(ctx, result, {
-      label: `baseline-r${r}`,
-      extension: false,
-      throttleRate: 0,
-      urls: warmList,
-    });
-    const warm = await runLatencyVariant(ctx, result, {
+    const warmProfile = await runInterleavedProfile(ctx, result, {
       label: `warm-r${r}`,
-      extension: true,
       throttleRate: 0,
       urls: warmList,
+      warmupUrls: latencyUrls(ctx.fixture, 1000 + (r - 1) * 10, LATENCY_WARMUP_OPENS),
     });
-    const baselineThrottled = await runLatencyVariant(ctx, result, {
-      label: `baseline-throttled-r${r}`,
-      extension: false,
-      throttleRate: 4,
-      urls: throttledList,
-    });
-    const throttled = await runLatencyVariant(ctx, result, {
+    const throttledProfile = await runInterleavedProfile(ctx, result, {
       label: `throttled-r${r}`,
-      extension: true,
       throttleRate: 4,
       urls: throttledList,
+      warmupUrls: latencyUrls(ctx.fixture, 1100 + (r - 1) * 10, LATENCY_WARMUP_OPENS),
     });
     const entry = {
       round: r,
-      baseline: runStats(baseline),
-      warm: runStats(warm),
-      baselineThrottled: runStats(baselineThrottled),
-      throttled: runStats(throttled),
-      deltasMs: {
-        warm: {
-          median: round(deltaOf(warm, baseline, 'median')),
-          p95: round(deltaOf(warm, baseline, 'p95')),
-        },
-        throttled: {
-          median: round(deltaOf(throttled, baselineThrottled, 'median')),
-          p95: round(deltaOf(throttled, baselineThrottled, 'p95')),
-        },
-      },
+      warm: profileSummary(warmProfile),
+      throttled: profileSummary(throttledProfile),
     };
     rounds.push(entry);
     ctx.log(
-      `latency round ${r}/${ROUNDS}: warm Δmedian=${entry.deltasMs.warm.median} ms Δp95=${entry.deltasMs.warm.p95} ms · throttled Δmedian=${entry.deltasMs.throttled.median} ms Δp95=${entry.deltasMs.throttled.p95} ms`,
+      `latency round ${r}/${ROUNDS}: warm paired Δmedian (this round)=${round(median(entry.warm.pairedDiffsMs))} ms · throttled paired Δmedian (this round)=${round(median(entry.throttled.pairedDiffsMs))} ms`,
     );
   }
 
   const coldBaseline = rounds[0]
-    ? { stats: { median: rounds[0].baseline.medianMs, p95: rounds[0].baseline.p95Ms } }
+    ? { stats: { median: rounds[0].warm.off.medianMs, p95: rounds[0].warm.off.p95Ms } }
     : null;
   const coldRun = await runLatencyVariant(ctx, result, {
     label: 'cold',
@@ -252,23 +414,41 @@ export async function scenarioLatency(ctx) {
   const coldDeltaMedian = deltaOf(coldRun, coldBaseline, 'median');
   const coldDeltaP95 = deltaOf(coldRun, coldBaseline, 'p95');
 
-  const throttledP95MedianOfRounds = medianOfRounds(rounds.map((e) => e.deltasMs.throttled.p95));
+  const warmPaired = pairedBlockMedianDelta(rounds.map((e) => e.warm.blocks));
+  const throttledPaired = pairedBlockMedianDelta(rounds.map((e) => e.throttled.blocks));
+  const warmMedianOfRounds = medianOfRounds(rounds.map((e) => e.warm.deltasMs.median));
+  const throttledMedianOfRounds = medianOfRounds(rounds.map((e) => e.throttled.deltasMs.median));
+  const throttledP95MedianOfRounds = medianOfRounds(rounds.map((e) => e.throttled.deltasMs.p95));
   const throttledPooled = pooledP95Delta(
-    rounds.map((e) => e.throttled.durationsMs),
-    rounds.map((e) => e.baselineThrottled.durationsMs),
+    rounds.map((e) => e.throttled.on.durationsMs),
+    rounds.map((e) => e.throttled.off.durationsMs),
   );
   const gated = {
     warm: {
-      median: medianOfRounds(rounds.map((e) => e.deltasMs.warm.median)),
-      p95: medianOfRounds(rounds.map((e) => e.deltasMs.warm.p95)),
+      median: warmPaired.delta,
+      p95: medianOfRounds(rounds.map((e) => e.warm.deltasMs.p95)),
     },
     throttled: {
-      median: medianOfRounds(rounds.map((e) => e.deltasMs.throttled.median)),
+      median: throttledPaired.delta,
       p95: throttledPooled.delta,
     },
   };
 
   result.measurements.rounds = rounds;
+  result.measurements.pairedMedians = {
+    warm: {
+      pairCount: warmPaired.pairCount,
+      droppedBlocks: warmPaired.droppedBlocks,
+      diffsMs: warmPaired.diffsMs.map((d) => round(d)),
+      deltaMs: round(warmPaired.delta),
+    },
+    throttled: {
+      pairCount: throttledPaired.pairCount,
+      droppedBlocks: throttledPaired.droppedBlocks,
+      diffsMs: throttledPaired.diffsMs.map((d) => round(d)),
+      deltaMs: round(throttledPaired.delta),
+    },
+  };
   result.measurements.throttledP95Pooled = {
     onCount: throttledPooled.onCount,
     offCount: throttledPooled.offCount,
@@ -278,21 +458,22 @@ export async function scenarioLatency(ctx) {
   };
   result.measurements.cold = { ...runStats(coldRun), deltasMs: { median: round(coldDeltaMedian), p95: round(coldDeltaP95) } };
   result.measurements.deltasMs = {
-    warm: { median: round(gated.warm.median), p95: round(gated.warm.p95) },
+    warm: { median: round(gated.warm.median), p95: round(gated.warm.p95), medianMedianOfRounds: round(warmMedianOfRounds) },
     cold: { median: round(coldDeltaMedian), p95: round(coldDeltaP95) },
     throttled: {
       median: round(gated.throttled.median),
       p95: round(gated.throttled.p95),
+      medianMedianOfRounds: round(throttledMedianOfRounds),
       p95MedianOfRounds: round(throttledP95MedianOfRounds),
     },
   };
   result.measurements.gatingMethod =
-    `Median across ${ROUNDS} round(s) of per-round extension-on minus extension-off deltas (M3 ratification, 2026-10-11) — except the throttled p95, which pools all rounds' raw samples per condition and gates on pooled-p95(on) minus pooled-p95(off) (follow-up, 2026-10-11; see measurements.throttledP95Pooled). Per-round raw values are in measurements.rounds.`;
+    `Added-latency MEDIAN (warm and throttled): median of paired ABBA block differences — two live browsers per profile alternate blocks of ${LATENCY_BLOCK_SIZE} opens, per-quartet paired deltas pooled across ${ROUNDS} round(s) (M3 gate design change, 2026-10-11; see measurements.pairedMedians). Warm p95: median across rounds of per-round deltas (M3 ratification, 2026-10-11). Throttled p95: pooled percentile across all rounds' samples (follow-up, 2026-10-11; see measurements.throttledP95Pooled). Superseded median-of-rounds statistics are reported informationally. Per-round blocks and samples are in measurements.rounds.`;
   result.notes.push(
-    'First tab of each batch discarded (browser warm-up noise). Each latency round runs a fresh baseline and a fresh extension browser; throttled rounds compare extension vs baseline both under 4x CPU throttling. Cold is a single 24-tab extension batch compared against round 1\'s baseline, informational only.',
+    `Interleaved design (M3 gate design change, user decision 2026-10-11): each warm/throttled round runs a baseline and an extension browser side by side, alternating ABBA blocks of ${LATENCY_BLOCK_SIZE} tab-opens; the median gates on the median of the ${warmPaired.pairCount + throttledPaired.pairCount} paired quartet differences (warm ${warmPaired.pairCount}, throttled ${throttledPaired.pairCount}; ${warmPaired.droppedBlocks + throttledPaired.droppedBlocks} blocks dropped as unpairable). Each browser opens ${LATENCY_WARMUP_OPENS} unmeasured warm-up tabs per round (cold-browser cover, replacing the per-batch first-tab discard for these profiles; the cold batch keeps its first-tab discard). Latency batches are unique-only — duplicate opens are covered by the duplicate-focus-swap scenario. No budget number changed.`,
   );
   result.notes.push(
-    `Throttled p95 gate statistic (follow-up, user decision 2026-10-11): pooled percentile across all ${ROUNDS} rounds — ${throttledPooled.onCount} extension-on and ${throttledPooled.offCount} extension-off samples pooled per condition; pooled p95 on = ${round(throttledPooled.onP95)} ms, off = ${round(throttledPooled.offP95)} ms, gated delta = ${round(throttledPooled.delta)} ms against the unchanged <25 ms budget. The superseded median-of-rounds statistic (${round(throttledP95MedianOfRounds)} ms this run) is reported informationally below, and the per-round p95 deltas remain in measurements.rounds — the noise stays visible; only the verdict statistic changed. No budget number changed.`,
+    `Throttled p95 gate statistic (follow-up, user decision 2026-10-11): pooled percentile across all ${ROUNDS} rounds of interleaved samples — ${throttledPooled.onCount} extension-on and ${throttledPooled.offCount} extension-off samples pooled per condition; pooled p95 on = ${round(throttledPooled.onP95)} ms, off = ${round(throttledPooled.offP95)} ms, gated delta = ${round(throttledPooled.delta)} ms against the unchanged <25 ms budget. The superseded median-of-rounds statistic (${round(throttledP95MedianOfRounds)} ms this run) is reported informationally below.`,
   );
   if (ROUNDS !== 5) {
     result.notes.push(`PERF_LATENCY_ROUNDS=${ROUNDS} (non-default): this run used ${ROUNDS} round(s) instead of the ratified 5.`);
@@ -301,10 +482,12 @@ export async function scenarioLatency(ctx) {
   const medianBudget = budgetOf(ctx, 'tab-open-added-latency-median').budget;
   const p95Budget = budgetOf(ctx, 'tab-open-added-latency-p95').budget;
   result.gates.push(
-    gate(ctx, 'tab-open-added-latency-median', `Warm added latency, median (median of ${ROUNDS} rounds)`, gated.warm.median, gated.warm.median !== null && gated.warm.median < medianBudget),
+    gate(ctx, 'tab-open-added-latency-median', `Warm added latency, median (paired ABBA blocks, median of ${warmPaired.pairCount} paired differences)`, gated.warm.median, gated.warm.median !== null && gated.warm.median < medianBudget),
     gate(ctx, 'tab-open-added-latency-p95', `Warm added latency, p95 (median of ${ROUNDS} rounds)`, gated.warm.p95, gated.warm.p95 !== null && gated.warm.p95 < p95Budget),
-    gate(ctx, 'tab-open-added-latency-median', `Throttled (4x CPU) added latency, median (median of ${ROUNDS} rounds)`, gated.throttled.median, gated.throttled.median !== null && gated.throttled.median < medianBudget),
+    gate(ctx, 'tab-open-added-latency-median', `Throttled (4x CPU) added latency, median (paired ABBA blocks, median of ${throttledPaired.pairCount} paired differences)`, gated.throttled.median, gated.throttled.median !== null && gated.throttled.median < medianBudget),
     gate(ctx, 'tab-open-added-latency-p95', `Throttled (4x CPU) added latency, p95 (pooled across ${ROUNDS} rounds: ${throttledPooled.onCount} on / ${throttledPooled.offCount} off samples)`, gated.throttled.p95, gated.throttled.p95 !== null && gated.throttled.p95 < p95Budget),
+    gate(ctx, 'tab-open-added-latency-median', `Warm added latency, median (median of ${ROUNDS} rounds — superseded statistic, informational)`, warmMedianOfRounds, warmMedianOfRounds !== null && warmMedianOfRounds < medianBudget, false),
+    gate(ctx, 'tab-open-added-latency-median', `Throttled (4x CPU) added latency, median (median of ${ROUNDS} rounds — superseded statistic, informational)`, throttledMedianOfRounds, throttledMedianOfRounds !== null && throttledMedianOfRounds < medianBudget, false),
     gate(ctx, 'tab-open-added-latency-p95', `Throttled (4x CPU) added latency, p95 (median of ${ROUNDS} rounds — superseded statistic, informational)`, throttledP95MedianOfRounds, throttledP95MedianOfRounds !== null && throttledP95MedianOfRounds < p95Budget, false),
     gate(ctx, 'tab-open-added-latency-median', 'Cold added latency, median (informational)', coldDeltaMedian, coldDeltaMedian !== null && coldDeltaMedian < medianBudget, false),
     gate(ctx, 'tab-open-added-latency-p95', 'Cold added latency, p95 (informational)', coldDeltaP95, coldDeltaP95 !== null && coldDeltaP95 < p95Budget, false),
