@@ -55,4 +55,14 @@ YouTube start times, GitHub line links); Slides gains its missing
 ## Validation
 
 vitest 336/336, cargo 25 unit tests + golden corpus, tsc clean.
-CI outcome: appended when the run of record lands.
+
+CI run of record 38198907148: **all jobs green** — Extension
+(build + unit tests), Rust core, and the full perf gate. Rows of
+note: warm median 0.48 ms (<10), warm p95 5.31 ms (<25),
+throttled median 5.64 ms (<10), throttled p95 pooled 2.3 ms
+(<25), swap completion 3/3 rounds with a 13 ms slowest swap,
+churn slope 0.0102 KB/cycle with 0.055 MB total growth. (The
+throttled-median row is the known noisy one on the current
+harness — it has landed on both sides of its budget across
+recent runs with no relevant code change; this run landed
+green. Nothing here tunes or touches the gate.)
