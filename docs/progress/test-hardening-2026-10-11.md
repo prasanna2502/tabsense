@@ -80,3 +80,39 @@ pins the correct behavior.
 Synthetic fixtures only throughout. No user-visible behavior change
 beyond the four fixes — the product now keeps promises it already
 made — so there is no demo video with this one.
+
+## Merge + rebase outcome (2026-10-12)
+
+PR #5 (anchor fold + descriptors) merged to main first — merge
+commit `ad2d59a` — on the strength of its fully green run of
+record 38198907148 (the user ruled on the red docs-triggered
+re-run: its only diff from the green head was this progress doc,
+and the two red rows are the documented noisy throttled pair).
+
+This branch was then rebased onto the new main
+(`eb0bdcc` → `94f191f`). One textual conflict (the shared golden
+corpus) and two semantic ones, all resolved preserving both
+branches' intent:
+
+- Corpus: union of the anchor-fold set (99 cases, with
+  `gdoc-heading` / `gdoc-two-headings` / `slides-anchor` flipped
+  fuzzy→exact) and the hardening h01–h20 additions = **119
+  cases**, consumed by both engines' corpus tests.
+- `tests/canon-parity.test.ts`: the "docs heading anchor" variant
+  pair now expects `exact` — the fold's behavior change, not a
+  regression.
+- `tests/panel-stress.test.ts`: generic-descriptor expectations
+  updated to PR #5's name-the-difference scheme (`Varies by id`,
+  `Page: other`); the precedence assertions are unchanged.
+
+Post-rebase repro recheck: **none of D3/D4/D5/D10 was healed by
+the anchor work** — all four `it.fails` repros still fail as
+pinned, so no promotions. D9 (CJK tokenization) remains open,
+awaiting a product call.
+
+Suites on the rebased branch: **vitest 671/671** (29 files;
+657 hardening + 14 from PR #5), **cargo 33/33** (25 unit +
+1 corpus over 119 cases + 7 hardening integration), **tsc
+clean**. No test or budget was relaxed by the rebase.
+
+CI outcome: appended below once the run of record lands.
