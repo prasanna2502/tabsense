@@ -125,7 +125,10 @@ describe('viewDescriptor — Google Workspace', () => {
       viewDescriptor(
         'https://docs.google.com/presentation/d/DECKID/present#slide=id.g1',
       ),
-    ).toBe('Linked slide');
+    ).toBe('Present view · Linked slide');
+    expect(
+      viewDescriptor('https://docs.google.com/presentation/d/DECKID/present'),
+    ).toBe('Present view');
   });
 });
 
@@ -195,13 +198,64 @@ describe('describeMembers', () => {
         'https://example.com/list?sort=asc',
         'https://example.com/list?sort=desc',
       ]),
-    ).toEqual(['Different page options', 'Different page options · View 2']);
+    ).toEqual(['Varies by sort', 'Varies by sort · View 2']);
     expect(
       describeMembers([
         'https://example.com/a/item',
         'https://example.com/b/item',
       ]),
     ).toEqual(['Different page view', 'Different page view · View 2']);
+  });
+
+  it('names the differing query parameter, never its value', () => {
+    const outputs = describeMembers([
+      'https://example.com/list?page=1&q=secret+terms',
+      'https://example.com/list?page=2&q=secret+terms',
+    ]);
+    expect(outputs).toEqual(['Varies by page', 'Varies by page · View 2']);
+    for (const out of outputs) expect(out).not.toContain('secret');
+  });
+
+  it('names AMP variants from the query marker and the path suffix', () => {
+    expect(
+      describeMembers([
+        'https://example.com/news/1',
+        'https://example.com/news/1?amp=1',
+      ]),
+    ).toEqual(['Another view', 'AMP version']);
+    expect(
+      describeMembers([
+        'https://example.com/n?output=amp',
+        'https://example.com/n',
+      ]),
+    ).toEqual(['AMP version', 'Another view']);
+    expect(
+      describeMembers([
+        'https://example.com/news/1/amp',
+        'https://example.com/news/1',
+      ]),
+    ).toEqual(['AMP version', 'Another view']);
+  });
+
+  it('names a differing trailing path segment, truncated when long', () => {
+    expect(
+      describeMembers([
+        'https://example.com/guide/intro',
+        'https://example.com/guide/outro',
+      ]),
+    ).toEqual(['Page: intro', 'Page: outro']);
+    expect(
+      describeMembers([
+        'https://example.com/a/b',
+        'https://example.com/a/b/appendix',
+      ]),
+    ).toEqual(['Another view', 'Page: appendix']);
+    expect(
+      describeMembers([
+        'https://example.com/g/short',
+        'https://example.com/g/abcdefghijklmnopqrstuvwxyz0123456789',
+      ]),
+    ).toEqual(['Page: short', 'Page: abcdefghijklmnopqrstuvwx…']);
   });
 
   it('makes repeated descriptors unique with ordinals', () => {

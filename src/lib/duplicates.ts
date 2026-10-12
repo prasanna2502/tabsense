@@ -264,6 +264,37 @@ export class DuplicateExemptions {
   }
 }
 
+/**
+ * Deep-link courtesy for the auto-close swap: when the duplicate
+ * being closed carries a URL fragment (a Docs heading anchor, a
+ * scroll-to-text target, a section hash) that the kept tab's URL
+ * does not already have, the kept tab should be navigated to the
+ * duplicate's fragment so the user's intended jump survives the
+ * close. A fragment-only URL change does not reload the page.
+ *
+ * Returns the URL the kept tab should navigate to, or null when no
+ * transfer applies: the duplicate has no fragment, the kept tab
+ * already sits at that fragment, or either URL is unparseable.
+ * Pure — the worker performs the actual tabs.update.
+ */
+export function fragmentTransferTarget(
+  keptUrl: string,
+  closedUrl: string,
+): string | null {
+  let kept: URL;
+  let closed: URL;
+  try {
+    kept = new URL(keptUrl);
+    closed = new URL(closedUrl);
+  } catch {
+    return null;
+  }
+  const fragment = closed.hash;
+  if (fragment === '' || kept.hash === fragment) return null;
+  kept.hash = fragment;
+  return kept.toString();
+}
+
 /** Groups of tabs sharing one fuzzyKey across 2+ distinct exactKeys:
  * the same document open in different views/states. Tabs that share
  * an exactKey land in an exact set instead; including them here when

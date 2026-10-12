@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DuplicateExemptions,
+  fragmentTransferTarget,
   isIntentionalDuplicate,
   shouldKeepIntentionalDuplicate,
   summarizeDuplicates,
@@ -160,5 +161,66 @@ describe('DuplicateExemptions lifecycle', () => {
     ex.mark(11, 'https://example.com/page');
     ex.forget(11);
     expect(ex.retain(11, 'https://example.com/page')).toBe(false);
+  });
+});
+
+describe('fragmentTransferTarget', () => {
+  it('moves a Docs heading anchor onto the kept tab', () => {
+    expect(
+      fragmentTransferTarget(
+        'https://docs.google.com/document/d/DOCID/edit',
+        'https://docs.google.com/document/d/DOCID/edit#heading=h.abc123',
+      ),
+    ).toBe('https://docs.google.com/document/d/DOCID/edit#heading=h.abc123');
+  });
+
+  it('replaces a different fragment on the kept tab (newest intent wins)', () => {
+    expect(
+      fragmentTransferTarget(
+        'https://example.com/article#intro',
+        'https://example.com/article#methods',
+      ),
+    ).toBe('https://example.com/article#methods');
+  });
+
+  it('carries a scroll-to-text fragment', () => {
+    expect(
+      fragmentTransferTarget(
+        'https://example.com/story',
+        'https://example.com/story#:~:text=hello%20world',
+      ),
+    ).toBe('https://example.com/story#:~:text=hello%20world');
+  });
+
+  it('returns null when the duplicate has no fragment', () => {
+    expect(
+      fragmentTransferTarget(
+        'https://example.com/article#intro',
+        'https://example.com/article',
+      ),
+    ).toBeNull();
+  });
+
+  it('returns null when the kept tab already sits at that fragment', () => {
+    expect(
+      fragmentTransferTarget(
+        'https://example.com/article#methods',
+        'https://example.com/article#methods',
+      ),
+    ).toBeNull();
+  });
+
+  it('preserves the kept tab’s own path and query, not the duplicate’s', () => {
+    expect(
+      fragmentTransferTarget(
+        'https://example.com/p?x=1',
+        'https://example.com/p?utm_source=share#part-2',
+      ),
+    ).toBe('https://example.com/p?x=1#part-2');
+  });
+
+  it('returns null for unparseable URLs instead of throwing', () => {
+    expect(fragmentTransferTarget('not a url', 'https://e.com/a#b')).toBeNull();
+    expect(fragmentTransferTarget('https://e.com/a', 'also not a url')).toBeNull();
   });
 });

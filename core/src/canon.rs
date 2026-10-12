@@ -383,10 +383,16 @@ fn github(parts: &Parts) -> CanonKeys {
 }
 
 /// Google Workspace (Docs / Sheets / Slides): key on the file ID.
-/// View state — the path tail after the ID (`/edit`, `/view`), a Docs/
-/// Slides fragment (heading / slide anchor), a Sheets `gid` — makes
-/// exact keys differ but never the fuzzy key. Sharing/source params
-/// (usp, ouid, …) never enter either key.
+/// View state — the path tail after the ID (`/edit`, `/view`) and a
+/// Sheets `gid` — makes exact keys differ but never the fuzzy key.
+/// A Docs / Slides fragment (heading / slide anchor) is a pure
+/// scroll anchor, exactly like a generic page fragment: it is folded
+/// out of the exact key, so two tabs of one document that differ
+/// only by their anchor are exact duplicates, not fuzzy-set members
+/// (dogfood fix, 2026-10-11 — anchored re-opens were listed as
+/// "similar documents", which read as false positives). The swap
+/// path preserves the anchor by navigating the kept tab to it.
+/// Sharing/source params (usp, ouid, …) never enter either key.
 fn google_docs(parts: &Parts) -> Option<CanonKeys> {
     let segs = parts.segments();
     let app = *segs.first()?;
@@ -408,20 +414,14 @@ fn google_docs(parts: &Parts) -> Option<CanonKeys> {
         exact.push('/');
         exact.push_str(&rest.join("/"));
     }
-    match app {
-        "spreadsheets" => {
-            if let Some(gid) = sheets_gid(parts) {
-                exact.push_str("#gid=");
-                exact.push_str(&gid);
-            }
-        }
-        _ => {
-            if let Some(frag) = &parts.fragment {
-                if !frag.is_empty() {
-                    exact.push('#');
-                    exact.push_str(frag);
-                }
-            }
+    // Spreadsheets keeps its gid in the exact key: different sheet
+    // tabs are genuinely different views. Docs / Slides fragments
+    // are folded out (see the doc comment above) — `parts.fragment`
+    // is deliberately not consulted for them.
+    if app == "spreadsheets" {
+        if let Some(gid) = sheets_gid(parts) {
+            exact.push_str("#gid=");
+            exact.push_str(&gid);
         }
     }
     Some(CanonKeys {
@@ -723,11 +723,36 @@ mod tests {
     }
 
     #[test]
-    fn gdoc_heading_anchor_is_fuzzy_not_exact() {
+    fn gdoc_heading_anchor_is_exact() {
         let (e1, f1) = keys("https://docs.google.com/document/d/ABC123/edit#heading=h.xyz");
         let (e2, f2) = keys("https://docs.google.com/document/d/ABC123/edit");
-        assert_ne!(e1, e2);
+        assert_eq!(e1, e2);
+        assert_eq!(e1, "gdoc:document:ABC123/edit");
         assert_eq!(f1, f2);
+    }
+
+    #[test]
+    fn gdoc_two_heading_anchors_are_exact() {
+        let (e1, _) = keys("https://docs.google.com/document/d/ABC123/edit#heading=h.aaa");
+        let (e2, _) = keys("https://docs.google.com/document/d/ABC123/edit#heading=h.bbb");
+        assert_eq!(e1, e2);
+    }
+
+    #[test]
+    fn slides_anchor_is_exact() {
+        let (e1, f1) = keys("https://docs.google.com/presentation/d/DECK1/edit#slide=id.g1");
+        let (e2, f2) = keys("https://docs.google.com/presentation/d/DECK1/edit");
+        assert_eq!(e1, e2);
+        assert_eq!(e1, "gdoc:presentation:DECK1/edit");
+        assert_eq!(f1, f2);
+    }
+
+    #[test]
+    fn gdoc_anchors_never_merge_distinct_docs() {
+        let (e1, f1) = keys("https://docs.google.com/document/d/ABC123/edit#heading=h.aaa");
+        let (e2, f2) = keys("https://docs.google.com/document/d/DEF456/edit#heading=h.bbb");
+        assert_ne!(e1, e2);
+        assert_ne!(f1, f2);
     }
 
     #[test]

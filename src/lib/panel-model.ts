@@ -74,7 +74,10 @@ export function faviconFallbackLetter(title: string, url: string): string {
 // mode, fragment kind, presence of a parameter). Descriptors never
 // include document IDs or raw query values — the only values shown
 // are a sheet's gid and a video's start time, which are exactly the
-// state the user is choosing between.
+// state the user is choosing between. A generic member may name the
+// differing query parameter (its name only, never its value) or
+// its differing trailing path segment (truncated) — again, exactly
+// the component the user is choosing between.
 // -------------------------------------------------------------------
 
 function parseUrl(url: string): URL | null {
@@ -110,6 +113,7 @@ const GOOGLE_MODE_LABELS: Record<string, string> = {
   view: 'Read view',
   preview: 'Preview',
   comment: 'Comment view',
+  present: 'Present view',
 };
 
 function googleWorkspaceDescriptor(u: URL): string | null {
@@ -215,8 +219,101 @@ export function viewDescriptor(url: string): string | null {
   );
 }
 
+/** Cap a descriptor component (a query-parameter name, a path
+ * segment) so a pathological URL cannot blow up a member row. */
+function truncateComponent(text: string): string {
+  return text.length > 24 ? `${text.slice(0, 24)}…` : text;
+}
+
+/** The AMP markers the generic fuzzy tier exists for: an `amp` /
+ * `output=amp` query parameter, or a trailing `/amp` path segment. */
+function hasAmpMarker(u: URL): boolean {
+  if (u.pathname.endsWith('/amp')) return true;
+  return (
+    u.searchParams.has('amp') ||
+    (u.searchParams.get('output') ?? '') === 'amp'
+  );
+}
+
+/** True when this member is the group's AMP variant: it carries a
+ * marker at least one other member lacks. */
+function isAmpVariant(u: URL, others: readonly URL[]): boolean {
+  return hasAmpMarker(u) && others.some((o) => !hasAmpMarker(o));
+}
+
+/** Query-parameter names whose value (or presence) differs between
+ * this member and at least one other member, in first-seen order.
+ * Names only — values are user data (search terms, filters) and
+ * never appear in a descriptor. */
+function differingParamNames(u: URL, others: readonly URL[]): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const consider = (name: string) => {
+    if (!seen.has(name)) {
+      seen.add(name);
+      names.push(name);
+    }
+  };
+  // The AMP markers are a named case of their own (isAmpVariant);
+  // they never surface as a bare "Varies by amp".
+  const isMarker = (name: string, a: URL, b: URL) =>
+    name === 'amp' ||
+    (name === 'output' &&
+      (a.searchParams.get('output') === 'amp' ||
+        b.searchParams.get('output') === 'amp'));
+  for (const o of others) {
+    for (const name of u.searchParams.keys()) {
+      if (isMarker(name, u, o)) continue;
+      if (u.searchParams.get(name) !== o.searchParams.get(name)) {
+        consider(name);
+      }
+    }
+    for (const name of o.searchParams.keys()) {
+      if (isMarker(name, u, o)) continue;
+      if (u.searchParams.get(name) !== o.searchParams.get(name)) {
+        consider(name);
+      }
+    }
+  }
+  return names;
+}
+
+/**
+ * When this member's path differs from another member's only in
+ * the trailing segment — a different final segment, or one extra
+ * trailing segment — that segment is the visible difference
+ * ("Page: intro"). Mid-path differences and prefix members return
+ * null; they keep the generic labels.
+ */
+function differingTrailingSegment(
+  u: URL,
+  others: readonly URL[],
+): string | null {
+  const segs = u.pathname.split('/').filter(Boolean);
+  for (const o of others) {
+    if (o.pathname === u.pathname) continue;
+    const oSegs = o.pathname.split('/').filter(Boolean);
+    const shared = Math.min(segs.length, oSegs.length);
+    let firstDiff = 0;
+    while (firstDiff < shared && segs[firstDiff] === oSegs[firstDiff]) {
+      firstDiff++;
+    }
+    // The divergence must be exactly this member's final segment:
+    // a replaced last segment, or one extra trailing segment. A
+    // member that is a strict prefix of the other has no segment
+    // of its own to name.
+    if (firstDiff === segs.length - 1) {
+      return segs[segs.length - 1];
+    }
+  }
+  return null;
+}
+
 /** Generic fallback, decided by comparing the member against the
- * rest of its group: what is the first thing that makes it differ? */
+ * rest of its group: name the first component that actually makes
+ * it differ — a fragment, the AMP marker, the differing query
+ * parameter, the differing trailing path segment — instead of a
+ * vague label or a repeated title. */
 function genericDescriptor(
   u: URL | null,
   group: readonly (URL | null)[],
@@ -226,8 +323,17 @@ function genericDescriptor(
   if (u.hash !== '' && others.some((o) => o.hash !== u.hash)) {
     return 'Linked section';
   }
-  if (others.some((o) => o.search !== u.search)) {
-    return 'Different page options';
+  if (isAmpVariant(u, others)) return 'AMP version';
+  const paramNames = differingParamNames(u, others);
+  if (paramNames.length > 0) {
+    return `Varies by ${truncateComponent(paramNames[0])}`;
+  }
+  const segment = differingTrailingSegment(u, others);
+  if (segment !== null) return `Page: ${truncateComponent(segment)}`;
+  // This member is the base page a sibling's sub-page hangs off —
+  // it is the plain view, not a "different" one.
+  if (others.some((o) => o.pathname.startsWith(`${u.pathname}/`))) {
+    return 'Another view';
   }
   if (others.some((o) => o.pathname !== u.pathname)) {
     return 'Different page view';

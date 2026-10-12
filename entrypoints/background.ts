@@ -7,6 +7,7 @@ import {
   countExtraCopies,
   findExactDuplicateSets,
   findFuzzySets,
+  fragmentTransferTarget,
   planBulkClose,
   planSimilarClose,
   shouldKeepIntentionalDuplicate,
@@ -1167,6 +1168,22 @@ export default defineBackground(() => {
     } catch {
       // The existing tab vanished mid-swap — close nothing.
       return;
+    }
+    // Deep-link courtesy: a duplicate opened at an anchor (a Docs
+    // heading link, a scroll-to-text target) carries the section
+    // the user meant to jump to. Fragments no longer distinguish
+    // exact keys, so hand the fragment to the kept tab before the
+    // duplicate closes — a fragment-only navigation does not
+    // reload the page. Best-effort: a failure here never blocks
+    // the swap.
+    const transferUrl = fragmentTransferTarget(existing.url, dup.url);
+    if (transferUrl !== null) {
+      try {
+        await chrome.tabs.update(existing.tabId, { url: transferUrl });
+      } catch {
+        // Kept tab went away or refused the navigation — the
+        // close below still proceeds on its own merits.
+      }
     }
     const doneAt = Date.now();
     recordSwap({ ms: doneAt - eventAt, cold, at: doneAt });
