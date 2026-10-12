@@ -374,10 +374,8 @@ describe('invariant: unvalidated model output is never applied', () => {
     id,
     title,
     url: `https://docs.google.com/document/d/D${id}/edit`,
-    host: 'docs.google.com',
     exactKey: `gdoc:document:D${id}/edit`,
     fuzzyKey: `gdoc:document:D${id}`,
-    groupId: -1,
   });
   const draft: SuggestionDraft = {
     kind: 'new-group',
@@ -452,6 +450,23 @@ describe('invariant: unvalidated model output is never applied', () => {
     expect(drafts[0].source).toBe('nano');
     expect(drafts[0].proposedName).toBe('Quarterly Work');
     expect(drafts[0].nanoFallback).toBe(false);
+  });
+
+  it('a VALID split partitions the draft: sub-groups become nano drafts, ungrouped tabs get none', async () => {
+    const judge = await judgeReturning(
+      JSON.stringify({
+        action: 'split',
+        groups: [{ name: 'Pair Group', tabs: [1, 2] }],
+        ungrouped: [3],
+      }),
+    );
+    const { drafts, stats } = await applyNanoJudgments([draft], [], judge);
+    expect(stats).toEqual({ calls: 1, failures: 0 });
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].tabIds).toEqual([1, 2]);
+    expect(drafts[0].proposedName).toBe('Pair Group');
+    expect(drafts[0].source).toBe('nano');
+    expect(drafts[0].fromPartition).toBe(true);
   });
 });
 

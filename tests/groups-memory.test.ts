@@ -125,10 +125,8 @@ describe('group identity — signatures and local ids', () => {
     id: 1,
     title: 't',
     url: 'https://example.com/',
-    host: 'example.com',
     exactKey: null,
     fuzzyKey: null,
-    groupId: -1,
     ...partial,
   });
 

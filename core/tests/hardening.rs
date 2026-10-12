@@ -235,6 +235,24 @@ fn scorer_json_boundary_never_panics_and_degrades_to_empty() {
 }
 
 #[test]
+fn scorer_cjk_titles_tokenize_empty_on_both_engines_d9() {
+    // D9 (test-hardening, P2): the tokenizer is ASCII-only in BOTH
+    // implementations, so CJK titles produce zero tokens and even
+    // identical CJK titles cannot cluster (host term alone is
+    // below threshold). This test pins the cross-engine AGREEMENT
+    // (parity); the user-visible expectation — that they SHOULD
+    // cluster — is the it.fails repro on the TS side
+    // (tests/grouping-adversarial.test.ts). A tokenizer fix must
+    // update both places together.
+    let tabs = serde_json::json!([
+        {"id": 1, "title": "四半期ごとの計画メモ", "url": "https://docs.google.com/document/d/J1/edit"},
+        {"id": 2, "title": "四半期ごとの計画メモ", "url": "https://docs.google.com/document/d/J2/edit"}
+    ]);
+    let out = cluster_tabs(&tabs.to_string());
+    assert_eq!(out, "[]");
+}
+
+#[test]
 fn scorer_json_handles_extreme_inputs() {
     // A pathological tab count stays bounded and fast enough for
     // a unit test — the greedy clusterer is O(n² · cluster), and
