@@ -116,3 +116,14 @@ Suites on the rebased branch: **vitest 671/671** (29 files;
 clean**. No test or budget was relaxed by the rebase.
 
 CI outcome: appended below once the run of record lands.
+
+CI run of record 38275552431 (rebased head): Extension PASS,
+Rust PASS, Perf FAIL on two rows — throttled p95 (pooled)
+43 ms vs <25 (the known-noisy tail row; the same data under
+the superseded statistic reads 19.63) and churn slope
+0.058 KB/cycle vs ≤0.03, a row that passed every prior run at
+0.010–0.018 with total growth still ~7× inside its cap. The
+churn slope is flagged for attribution, not tuned away. Every
+other row passed, including the throttled median at 8.63 ms.
+(A docs-only commit appending this outcome triggers one more
+CI run; it changes no code.)
