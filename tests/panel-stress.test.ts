@@ -79,16 +79,22 @@ describe('describeMembers at scale', () => {
     expect(new Set(out).size).toBe(4);
   });
 
+  // Labels updated on the PR #6 rebase: PR #5 changed the generic
+  // descriptor scheme to name the differing component ("Varies by
+  // <param>", "Page: <segment>") in place of the old generic labels
+  // ("Different page options" / "Different page view"). The
+  // precedence this test pins — fragment beats query beats path,
+  // ordinals keep members unique — is unchanged.
   it('generic fallback precedence: fragment beats query beats path', () => {
     const base = 'https://example.com/item?id=1';
     expect(
       describeMembers([base, 'https://example.com/item?id=1#frag'])[1],
     ).toBe('Linked section');
     expect(describeMembers([base, 'https://example.com/item?id=2'])[1]).toBe(
-      'Different page options · View 2', // member 0 reads the same — the difference is symmetric
+      'Varies by id · View 2', // member 0 reads the same — the difference is symmetric
     );
     expect(describeMembers([base, 'https://example.com/other?id=1'])[1]).toBe(
-      'Different page view · View 2',
+      'Page: other',
     );
     expect(describeMembers([base, base])[1]).toBe('Another view · View 2');
   });

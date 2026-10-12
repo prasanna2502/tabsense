@@ -228,10 +228,14 @@ describe('classification of systematic variant pairs (both engines)', () => {
       expect: 'fuzzy',
     },
     {
-      name: 'docs heading anchor is another view',
+      // Anchor fold (PR #5): Docs heading fragments are folded out
+      // of the exact key, so an anchored open is the same document,
+      // not another view. (Was 'fuzzy' before the fold; updated on
+      // the PR #6 rebase — behavior change, not a regression.)
+      name: 'docs heading anchor folds into the document',
       a: `https://docs.google.com/document/d/${ID}/edit`,
       b: `https://docs.google.com/document/d/${ID}/edit#heading=h.zz`,
-      expect: 'fuzzy',
+      expect: 'exact',
     },
     {
       name: 'sheets gid is another view',
