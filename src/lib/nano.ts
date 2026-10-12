@@ -441,6 +441,36 @@ export interface JudgeOutcome {
   callFailed: boolean;
 }
 
+/** Race a promise against a hard deadline (defect D6): the
+ * Prompt API's AbortSignal only covers an in-flight prompt, and
+ * only when the implementation honors it — a session create()
+ * that stalls (model-download wedge) or a prompt that ignores the
+ * signal must still bound the attempt. `onTimeout` runs when the
+ * deadline wins (used to fire the abort signal as well, so a
+ * well-behaved implementation stops work immediately). */
+function withHardTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  onTimeout?: () => void,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      onTimeout?.();
+      reject(new Error(`nano call exceeded ${timeoutMs} ms`));
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+  });
+}
+
 /** One judge attempt: create a session, prompt with a hard timeout,
  * validate strictly, always destroy the session. Never throws. */
 async function judgeAttempt(
@@ -450,25 +480,46 @@ async function judgeAttempt(
   simple: boolean,
 ): Promise<{ verdict: NanoVerdict | null; callFailed: boolean }> {
   let session: NanoSession | null = null;
+  let attemptDone = false;
   try {
-    session = await lm.create({
+    const createPromise = lm.create({
       ...NANO_LANGUAGE_OPTIONS,
       systemPrompt:
         'You organize browser tabs into topic groups. You answer with one JSON object only.',
     });
+    // D6: if create() resolves after the attempt already timed
+    // out, the late session must not leak — destroy it on arrival.
+    void createPromise.then(
+      (late) => {
+        if (attemptDone) {
+          try {
+            late.destroy();
+          } catch {
+            // Not worth failing over (same as the finally below).
+          }
+        }
+      },
+      () => undefined,
+    );
+    // D6: the hard timeout covers create() too. Before this fix
+    // only session.prompt was raced (via the abort signal), so a
+    // create() that never resolved — the model-download stall —
+    // wedged the grouping pass forever despite this module's
+    // "every call has a hard timeout" contract.
+    session = await withHardTimeout(createPromise, timeoutMs);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const text = await session.prompt(buildJudgePrompt(req, simple), {
+    const text = await withHardTimeout(
+      session.prompt(buildJudgePrompt(req, simple), {
         signal: controller.signal,
-      });
-      return { verdict: validateVerdictText(text, req), callFailed: false };
-    } finally {
-      clearTimeout(timer);
-    }
+      }),
+      timeoutMs,
+      () => controller.abort(),
+    );
+    return { verdict: validateVerdictText(text, req), callFailed: false };
   } catch {
     return { verdict: null, callFailed: true };
   } finally {
+    attemptDone = true;
     try {
       session?.destroy();
     } catch {
