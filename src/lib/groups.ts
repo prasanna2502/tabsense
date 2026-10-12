@@ -46,9 +46,16 @@ export function isPlatformGroupName(
   const n = name.trim().toLowerCase();
   if (n === '') return false;
   if (PLATFORM_GROUP_NAMES.has(n)) return true;
+  // D7 (test-hardening): the bare-domain check must also see the
+  // name with fullwidth dots folded to ASCII and ONE trailing dot
+  // stripped — 'google．com' (U+FF0E) and 'google.com.' are
+  // domain names a judge can plausibly emit, and both slipped
+  // past the raw regex (the trailing dot fails the shape, the
+  // fullwidth dot is not a '.' to it).
+  const nDomain = n.replace(/．/g, '.').replace(/\.$/, '');
   if (
-    /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(n) &&
-    DOMAIN_TLDS.has(n.split('.').pop() as string)
+    /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(nDomain) &&
+    DOMAIN_TLDS.has(nDomain.split('.').pop() as string)
   ) {
     return true;
   }

@@ -161,6 +161,11 @@ interface TrackedTab {
    * reads (kept fresh by tab events and snapshot refreshes). */
   index: number;
   active: boolean;
+  /** When this tab arrived at its CURRENT exact key, on a
+   * monotonic in-worker counter (defect D1): a tab may only ever
+   * be closed in favor of a tab that held the same key before it
+   * did. Re-stamped whenever the tab's exact key changes. */
+  keySeq: number;
 }
 
 export default defineBackground(() => {
@@ -171,6 +176,8 @@ export default defineBackground(() => {
 
   const liveTabs = new Map<number, TrackedTab>();
   const exactIndex = new Map<string, Set<number>>();
+  /** Monotonic stamp for TrackedTab.keySeq (defect D1). */
+  let keySeqCounter = 0;
   /** Events that arrived while the Wasm core was instantiating. */
   const pendingQueue: Array<{ tabId: number; eventAt: number }> = [];
 
@@ -324,12 +331,13 @@ export default defineBackground(() => {
     if (previous) indexRemove(previous);
     const keys =
       !excluded && url !== '' ? canonicalKeys(url).keys : null;
+    const exactKey = keys?.exactKey ?? null;
     const tracked: TrackedTab = {
       tabId: tab.id,
       windowId: tab.windowId,
       url,
       title: tab.title ?? previous?.title ?? '',
-      exactKey: keys?.exactKey ?? null,
+      exactKey,
       fuzzyKey: keys?.fuzzyKey ?? null,
       firstSeenAt: previous?.firstSeenAt ?? Date.now(),
       observed: (previous?.observed ?? false) || observedNow,
@@ -338,6 +346,13 @@ export default defineBackground(() => {
       pinned: tab.pinned ?? false,
       index: tab.index ?? previous?.index ?? 0,
       active: tab.active ?? previous?.active ?? false,
+      // Seniority survives a URL change that keeps the same key
+      // (a tracker param came or went); arriving at a NEW key —
+      // creation, or navigating onto a page — starts a new tenure.
+      keySeq:
+        previous && previous.exactKey === exactKey
+          ? previous.keySeq
+          : ++keySeqCounter,
     };
     liveTabs.set(tab.id, tracked);
     indexAdd(tracked);
@@ -1140,13 +1155,26 @@ export default defineBackground(() => {
     }
     const set = exactIndex.get(dup.exactKey);
     if (!set || set.size < 2) return;
-    // The existing tab is the earliest-seen other member of the set.
+    // The existing tab is the most SENIOR other member of the set:
+    // one that arrived at this exact key before the candidate did
+    // (defect D1, test-hardening). The old earliest-firstSeenAt
+    // pick let two duplicates evaluated concurrently — the
+    // cold-core queue drains with un-awaited evaluations, and
+    // same-turn creations race identically — each choose the OTHER
+    // as the existing tab, so both closed and the user lost every
+    // copy of the page. Seniority is order-independent: the junior
+    // copy's evaluation finds its senior and closes; the senior's
+    // own evaluation finds no senior rival and stands down. A tab
+    // that navigates onto an open page re-stamps its tenure on
+    // arrival (see trackTab), so the navigator is always the
+    // junior and still the one that closes.
     let existing: TrackedTab | null = null;
     for (const id of set) {
       if (id === tabId) continue;
       const candidate = liveTabs.get(id);
       if (!candidate || candidate.excluded) continue;
-      if (!existing || candidate.firstSeenAt < existing.firstSeenAt) {
+      if (candidate.keySeq >= dup.keySeq) continue;
+      if (!existing || candidate.keySeq < existing.keySeq) {
         existing = candidate;
       }
     }
@@ -1432,7 +1460,14 @@ export default defineBackground(() => {
     if (snapshotTimer !== null) return;
     snapshotTimer = setTimeout(() => {
       snapshotTimer = null;
-      scheduleRefreshSnapshot();
+      // D2 (test-hardening): this callback used to call
+      // scheduleRefreshSnapshot() again, re-arming the timer
+      // forever — event-driven refreshes NEVER ran, so the
+      // persisted snapshot and badge went stale for the whole
+      // session after init (only init and the panel's explicit
+      // snapshot request refreshed directly). The trailing edge
+      // must do the refresh itself.
+      void refreshSnapshot();
     }, SNAPSHOT_COALESCE_MS);
   }
 
@@ -1649,6 +1684,9 @@ export default defineBackground(() => {
       for (const t of liveTabs.values()) {
         if (!t.excluded && t.url !== '') {
           const { keys } = canonicalKeys(t.url);
+          // A key change at the engine boundary starts a new
+          // tenure, exactly like a navigation (defect D1).
+          if (t.exactKey !== keys.exactKey) t.keySeq = ++keySeqCounter;
           t.exactKey = keys.exactKey;
           t.fuzzyKey = keys.fuzzyKey;
         }
