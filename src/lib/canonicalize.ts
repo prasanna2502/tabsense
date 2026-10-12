@@ -285,11 +285,16 @@ function googleDocs(parts: Parts): CanonKeys | null {
   let exactKey = `gdoc:${app}:${id}`;
   if (rest.length > 0) exactKey += `/${rest.join('/')}`;
   if (app === 'spreadsheets') {
+    // Sheets keeps its gid in the exact key: different sheet tabs
+    // are genuinely different views.
     const gid = sheetsGid(parts);
     if (gid !== null) exactKey += `#gid=${gid}`;
-  } else if (parts.fragment !== '') {
-    exactKey += `#${parts.fragment}`;
   }
+  // Docs / Slides fragments (heading / slide anchors) are pure
+  // scroll anchors and are folded out of the exact key — a tab that
+  // differs only by its anchor is an exact duplicate, not a fuzzy
+  // "similar document" (dogfood fix, 2026-10-11). The swap path
+  // preserves the anchor by navigating the kept tab to it.
   return { exactKey, fuzzyKey: `gdoc:${app}:${id}` };
 }
 
